@@ -79,7 +79,7 @@ Runs entirely **locally** on your GPU, NPU, or CPU with no cloud API, no interne
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/whisper-ptt.git
+git clone https://github.com/Nevangalar/whisper-stt-gui.git
 cd whisper-ptt
 ```
 
