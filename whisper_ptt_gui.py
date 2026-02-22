@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-Whisper PTT – GUI Edition v3
+Whisper PTT – GUI Edition v5
 ==============================
-Fixes gegenüber v2:
-  • Settings-Fenster öffnet immer wieder korrekt
-  • Maustasten (Daumentaste etc.) werden im Hotkey-Recorder erkannt (pynput)
-  • Kopieren gibt nur den erkannten Text OHNE Zeitstempel aus
-  • Getrennte Felder: "Erkannter Text" und "Debug / Log"
-  • Texte im Textfeld können markiert und teilweise kopiert werden
-    (Drag gilt nur auf der Titelleiste, nicht im Content-Bereich)
+  • Multilingual UI: English (default), Deutsch, Français, Español
+  • UI language selector in Settings → General
+  • Mic-Watchdog: auto-restart on silent inputs after reboot
+  • Windows mic permission request (winrt / registry / privacy settings)
+  • Always-on-top overlay, voice meter, dual text panels
+  • Hotkey recorder supports keyboard AND mouse buttons (pynput)
 """
 
-import os, sys, time, json, tempfile, threading, queue
+VERSION = "0.6.0"
+
+import os, sys, time, json, tempfile, threading, queue, subprocess, ctypes
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
@@ -21,11 +22,10 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from pathlib import Path
 
-# pynput für keyboard + mouse (Maustasten-Support)
 from pynput import keyboard as pynput_kb
 from pynput import mouse    as pynput_ms
 
-# ─── Pfade ─────────────────────────────────────────────────────────────────────
+# ─── Paths ─────────────────────────────────────────────────────────────────────
 
 BASE_DIR        = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).parent
 SETTINGS_FILE   = BASE_DIR / "settings.json"
@@ -35,11 +35,13 @@ MODEL_CACHE_DIR = str(BASE_DIR / "models")
 
 DEFAULTS = {
     "hotkey":          "ctrl+alt+space",
-    "language":        "de",
+    "language":        "de",        # Whisper recognition language
+    "ui_lang":         "en",        # Interface language
     "model":           "base",
     "device":          "auto",
     "compute_type":    "auto",
     "paste_mode":      "clipboard",
+    "output_language": "same",   # "same" = no translation, "en" = translate to English
     "vad_filter":      True,
     "vad_silence_ms":  300,
     "sound_feedback":  True,
@@ -49,7 +51,7 @@ DEFAULTS = {
     "window_y":        -1,
 }
 
-# ─── Farben ────────────────────────────────────────────────────────────────────
+# ─── Colors ────────────────────────────────────────────────────────────────────
 
 C = {
     "bg":         "#1a1a2e", "bg2": "#16213e", "bg3": "#0d0d1a",
@@ -62,54 +64,475 @@ C = {
     "btn_clear":  "#3d1a1a", "btn_set": "#2a2a4a", "sep": "#333355",
 }
 
-LANGUAGES = {
-    "Automatisch": None, "Deutsch": "de", "Englisch": "en",
-    "Franzoesisch": "fr", "Spanisch": "es", "Italienisch": "it",
-    "Niederlaendisch": "nl", "Polnisch": "pl", "Russisch": "ru",
-    "Chinesisch": "zh", "Japanisch": "ja", "Tuerkisch": "tr",
-}
-MODELS = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
-DEVICES = {
-    "Auto-Erkennung": "auto", "NVIDIA CUDA": "cuda",
-    "NPU / DirectML": "dml", "CPU": "cpu",
-}
-COMPUTE_TYPES = {
-    "Auto": "auto", "float16 (GPU)": "float16",
-    "int8 (schnell)": "int8", "float32 (CPU)": "float32",
+# ─── Translations ──────────────────────────────────────────────────────────────
+
+TRANSLATIONS = {
+    # ── Status messages ────────────────────────────────────────────────────────
+    "initializing": {
+        "en": "Initializing...", "de": "Initialisiere...",
+        "fr": "Initialisation...", "es": "Inicializando...",
+    },
+    "recording": {
+        "en": "Recording...", "de": "Aufnahme...",
+        "fr": "Enregistrement...", "es": "Grabando...",
+    },
+    "processing": {
+        "en": "Processing...", "de": "Verarbeite...",
+        "fr": "Traitement...", "es": "Procesando...",
+    },
+    "ready": {
+        "en": "Ready", "de": "Bereit",
+        "fr": "Prêt", "es": "Listo",
+    },
+    "mic_error": {
+        "en": "Mic error!", "de": "Mic-Fehler!",
+        "fr": "Erreur micro!", "es": "¡Error mic!",
+    },
+    "mic_restart": {
+        "en": "Mic restart...", "de": "Mic Neustart...",
+        "fr": "Redémarrage micro...", "es": "Reiniciando mic...",
+    },
+    "load_error": {
+        "en": "Load error!", "de": "Ladefehler!",
+        "fr": "Erreur chargement!", "es": "¡Error de carga!",
+    },
+    # ── Overlay labels ─────────────────────────────────────────────────────────
+    "microphone": {
+        "en": "MICROPHONE", "de": "MIKROFON",
+        "fr": "MICROPHONE", "es": "MICRÓFONO",
+    },
+    "recognized_text": {
+        "en": "RECOGNIZED TEXT", "de": "ERKANNTER TEXT",
+        "fr": "TEXTE RECONNU", "es": "TEXTO RECONOCIDO",
+    },
+    "debug_log": {
+        "en": "DEBUG / LOG", "de": "DEBUG / LOG",
+        "fr": "DEBUG / JOURNAL", "es": "DEBUG / LOG",
+    },
+    # ── Overlay buttons ────────────────────────────────────────────────────────
+    "btn_copy": {
+        "en": "📋 Copy", "de": "📋 Kopieren",
+        "fr": "📋 Copier", "es": "📋 Copiar",
+    },
+    "btn_paste": {
+        "en": "📌 Paste", "de": "📌 Einfügen",
+        "fr": "📌 Coller", "es": "📌 Pegar",
+    },
+    "btn_clear": {
+        "en": "🗑️ Clear", "de": "🗑️ Leeren",
+        "fr": "🗑️ Effacer", "es": "🗑️ Limpiar",
+    },
+    "btn_clear_log": {
+        "en": "🗑️ Clear log", "de": "🗑️ Log leeren",
+        "fr": "🗑️ Vider journal", "es": "🗑️ Limpiar log",
+    },
+    "flash_copied": {
+        "en": "📋 Copied!", "de": "📋 Kopiert!",
+        "fr": "📋 Copié!", "es": "📋 ¡Copiado!",
+    },
+    "flash_pasted": {
+        "en": "📌 Pasted!", "de": "📌 Eingefügt!",
+        "fr": "📌 Collé!", "es": "📌 ¡Pegado!",
+    },
+    # ── Settings window ────────────────────────────────────────────────────────
+    "settings_title": {
+        "en": "⚙  Settings", "de": "⚙  Einstellungen",
+        "fr": "⚙  Paramètres", "es": "⚙  Ajustes",
+    },
+    "settings_win_title": {
+        "en": "Settings – Whisper PTT", "de": "Einstellungen – Whisper PTT",
+        "fr": "Paramètres – Whisper PTT", "es": "Ajustes – Whisper PTT",
+    },
+    "tab_general": {
+        "en": "  General  ", "de": "  Allgemein  ",
+        "fr": "  Général  ", "es": "  General  ",
+    },
+    "tab_audio": {
+        "en": "  Audio / AI  ", "de": "  Audio / KI  ",
+        "fr": "  Audio / IA  ", "es": "  Audio / IA  ",
+    },
+    "tab_advanced": {
+        "en": "  Advanced  ", "de": "  Erweitert  ",
+        "fr": "  Avancé  ", "es": "  Avanzado  ",
+    },
+    "btn_save": {
+        "en": "✔  Save", "de": "✔  Speichern",
+        "fr": "✔  Enregistrer", "es": "✔  Guardar",
+    },
+    "btn_cancel": {
+        "en": "Cancel", "de": "Abbrechen",
+        "fr": "Annuler", "es": "Cancelar",
+    },
+    "checking_hw": {
+        "en": "Checking hardware...", "de": "Prüfe Hardware...",
+        "fr": "Vérification matériel...", "es": "Comprobando hardware...",
+    },
+    # ── Settings sections ──────────────────────────────────────────────────────
+    "sec_hotkey": {
+        "en": "Shortcut / Mouse Button (Hotkey)",
+        "de": "Tastenkürzel / Maustaste (Hotkey)",
+        "fr": "Raccourci / Bouton souris (Hotkey)",
+        "es": "Atajo / Botón ratón (Hotkey)",
+    },
+    "hotkey_hint": {
+        "en": "Keyboard keys AND mouse buttons (e.g. thumb button) are supported.",
+        "de": "Keyboard-Tasten UND Maustasten (z.B. Daumentaste) werden erkannt.",
+        "fr": "Les touches clavier ET les boutons souris (ex. pouce) sont supportés.",
+        "es": "Teclas de teclado Y botones de ratón (p.ej. pulgar) son compatibles.",
+    },
+    "btn_record": {
+        "en": "🔴 Record", "de": "🔴 Aufnehmen",
+        "fr": "🔴 Enregistrer", "es": "🔴 Grabar",
+    },
+    "btn_stop_record": {
+        "en": "⏹  Stop", "de": "⏹  Stoppen",
+        "fr": "⏹  Arrêter", "es": "⏹  Detener",
+    },
+    "recorder_hint": {
+        "en": "Press modifier (Ctrl/Alt) + key OR mouse button",
+        "de": "Modifier (Ctrl/Alt) + Taste ODER Maustaste drücken",
+        "fr": "Appuyer modificateur (Ctrl/Alt) + touche OU bouton souris",
+        "es": "Pulsar modificador (Ctrl/Alt) + tecla O botón de ratón",
+    },
+    "recorder_prompt": {
+        "en": "▶  Press keys / mouse button ...",
+        "de": "▶  Tasten / Maustaste drücken ...",
+        "fr": "▶  Appuyez touches / bouton souris ...",
+        "es": "▶  Pulsa teclas / botón ratón ...",
+    },
+    "sec_ui_lang": {
+        "en": "Interface Language",
+        "de": "Oberflächensprache",
+        "fr": "Langue de l'interface",
+        "es": "Idioma de la interfaz",
+    },
+    "ui_lang_note": {
+        "en": "Restart required to apply interface language change.",
+        "de": "Neustart erforderlich um die Sprachänderung anzuwenden.",
+        "fr": "Redémarrage requis pour appliquer le changement de langue.",
+        "es": "Se requiere reinicio para aplicar el cambio de idioma.",
+    },
+    "sec_rec_lang": {
+        "en": "Recognition Language (Input)",
+        "de": "Erkennungssprache (Eingabe)",
+        "fr": "Langue de reconnaissance (entrée)",
+        "es": "Idioma de reconocimiento (entrada)",
+    },
+    "sec_output_lang": {
+        "en": "Output Language / Translation",
+        "de": "Ausgabesprache / Übersetzung",
+        "fr": "Langue de sortie / Traduction",
+        "es": "Idioma de salida / Traducción",
+    },
+    "output_same": {
+        "en": "Same as input (no translation)",
+        "de": "Wie Eingabe (keine Übersetzung)",
+        "fr": "Comme l'entrée (sans traduction)",
+        "es": "Igual que la entrada (sin traducción)",
+    },
+    "output_lang_note": {
+        "en": "Whisper can only translate to English natively.",
+        "de": "Whisper kann nativ nur ins Englische übersetzen.",
+        "fr": "Whisper ne peut traduire nativement qu'en anglais.",
+        "es": "Whisper solo puede traducir al inglés de forma nativa.",
+    },
+    "sec_paste": {
+        "en": "Insert text via",
+        "de": "Text einfügen via",
+        "fr": "Insérer le texte via",
+        "es": "Insertar texto via",
+    },
+    "paste_clipboard": {
+        "en": "Clipboard (Ctrl+V)  ← recommended",
+        "de": "Zwischenablage (Ctrl+V)  ← empfohlen",
+        "fr": "Presse-papiers (Ctrl+V)  ← recommandé",
+        "es": "Portapapeles (Ctrl+V)  ← recomendado",
+    },
+    "paste_type": {
+        "en": "Direct typing (no clipboard, but slower)",
+        "de": "Direkt tippen (kein Clipboard, aber langsamer)",
+        "fr": "Saisie directe (sans presse-papiers, plus lent)",
+        "es": "Escritura directa (sin portapapeles, más lento)",
+    },
+    "sec_appearance": {
+        "en": "Appearance",
+        "de": "Erscheinungsbild",
+        "fr": "Apparence",
+        "es": "Apariencia",
+    },
+    "sound_feedback": {
+        "en": "Audio feedback (beep on start/stop)",
+        "de": "Audio-Feedback (Beep bei Start/Stop)",
+        "fr": "Retour audio (bip au démarrage/arrêt)",
+        "es": "Retroalimentación audio (pitido al inicio/fin)",
+    },
+    "transparency": {
+        "en": "Transparency:",
+        "de": "Transparenz:",
+        "fr": "Transparence:",
+        "es": "Transparencia:",
+    },
+    "sec_device": {
+        "en": "Compute Device",
+        "de": "Berechnungsgerät",
+        "fr": "Périphérique de calcul",
+        "es": "Dispositivo de cálculo",
+    },
+    "sec_compute": {
+        "en": "Compute Type",
+        "de": "Compute-Typ",
+        "fr": "Type de calcul",
+        "es": "Tipo de cálculo",
+    },
+    "compute_note": {
+        "en": "'Auto' selects the optimal type for the device.",
+        "de": "'Auto' wählt automatisch den optimalen Typ je nach Gerät.",
+        "fr": "'Auto' sélectionne le type optimal pour le périphérique.",
+        "es": "'Auto' selecciona el tipo óptimo para el dispositivo.",
+    },
+    "sec_model": {
+        "en": "Whisper Model",
+        "de": "Whisper-Modell",
+        "fr": "Modèle Whisper",
+        "es": "Modelo Whisper",
+    },
+    "sec_vad": {
+        "en": "Voice Activity Detection (VAD)",
+        "de": "Voice Activity Detection (VAD)",
+        "fr": "Détection d'activité vocale (VAD)",
+        "es": "Detección de actividad de voz (VAD)",
+    },
+    "vad_enable": {
+        "en": "Enable VAD (automatically ignores silence)",
+        "de": "VAD aktivieren (ignoriert Stille automatisch)",
+        "fr": "Activer VAD (ignore automatiquement le silence)",
+        "es": "Activar VAD (ignora el silencio automáticamente)",
+    },
+    "vad_threshold": {
+        "en": "Silence threshold:",
+        "de": "Stille-Schwelle:",
+        "fr": "Seuil de silence:",
+        "es": "Umbral de silencio:",
+    },
+    "sec_beam": {
+        "en": "Beam Size  (quality vs. speed)",
+        "de": "Beam Size  (Qualität vs. Geschwindigkeit)",
+        "fr": "Beam Size  (qualité vs. vitesse)",
+        "es": "Beam Size  (calidad vs. velocidad)",
+    },
+    "beam_hint": {
+        "en": "(1=fast, 5=default, 10=accurate)",
+        "de": "(1=schnell, 5=Standard, 10=genau)",
+        "fr": "(1=rapide, 5=défaut, 10=précis)",
+        "es": "(1=rápido, 5=defecto, 10=preciso)",
+    },
+    "btn_reset": {
+        "en": "↺  Reset all settings to defaults",
+        "de": "↺  Alle Einstellungen auf Standard zurücksetzen",
+        "fr": "↺  Réinitialiser tous les paramètres",
+        "es": "↺  Restablecer todos los ajustes",
+    },
+    "reset_confirm_title": {
+        "en": "Reset", "de": "Zurücksetzen",
+        "fr": "Réinitialiser", "es": "Restablecer",
+    },
+    "reset_confirm_msg": {
+        "en": "Reset all settings to defaults?",
+        "de": "Alle Einstellungen zurücksetzen?",
+        "fr": "Réinitialiser tous les paramètres?",
+        "es": "¿Restablecer todos los ajustes?",
+    },
+    # ── Model descriptions ─────────────────────────────────────────────────────
+    "model_tiny": {
+        "en": "~75 MB   | very fast   | simple text",
+        "de": "~75 MB   | sehr schnell | einfacher Text",
+        "fr": "~75 MB   | très rapide  | texte simple",
+        "es": "~75 MB   | muy rápido   | texto simple",
+    },
+    "model_base": {
+        "en": "~150 MB  | fast        | good for everyday use  ★",
+        "de": "~150 MB  | schnell      | gut für Alltag  ★",
+        "fr": "~150 MB  | rapide       | bon usage quotidien  ★",
+        "es": "~150 MB  | rápido       | bueno para el día a día  ★",
+    },
+    "model_small": {
+        "en": "~500 MB  | medium      | better accuracy",
+        "de": "~500 MB  | mittel       | bessere Genauigkeit",
+        "fr": "~500 MB  | moyen        | meilleure précision",
+        "es": "~500 MB  | medio        | mayor precisión",
+    },
+    "model_medium": {
+        "en": "~1.5 GB  | slow        | high accuracy",
+        "de": "~1.5 GB  | langsam      | hohe Genauigkeit",
+        "fr": "~1.5 GB  | lent         | haute précision",
+        "es": "~1.5 GB  | lento        | alta precisión",
+    },
+    "model_large_v2": {
+        "en": "~3 GB    | very slow   | maximum accuracy",
+        "de": "~3 GB    | sehr langsam | maximale Genauigkeit",
+        "fr": "~3 GB    | très lent    | précision maximale",
+        "es": "~3 GB    | muy lento    | precisión máxima",
+    },
+    "model_large_v3": {
+        "en": "~3 GB    | very slow   | latest version",
+        "de": "~3 GB    | sehr langsam | neueste Version",
+        "fr": "~3 GB    | très lent    | dernière version",
+        "es": "~3 GB    | muy lento    | última versión",
+    },
+    # ── Hardware detection strings ─────────────────────────────────────────────
+    "hw_not_available": {
+        "en": "not available", "de": "nicht verfügbar",
+        "fr": "non disponible", "es": "no disponible",
+    },
+    "hw_available": {
+        "en": "available", "de": "verfügbar",
+        "fr": "disponible", "es": "disponible",
+    },
+    # ── Mic permission dialog ──────────────────────────────────────────────────
+    "mic_perm_title": {
+        "en": "Microphone Permission",
+        "de": "Mikrofon-Berechtigung",
+        "fr": "Permission microphone",
+        "es": "Permiso micrófono",
+    },
+    "mic_perm_msg": {
+        "en": (
+            "Windows Microphone Settings have been opened.\n\n"
+            "1. Make sure 'Microphone access' is enabled\n"
+            "2. Enable 'Allow apps to access your microphone'\n"
+            "3. Close that window\n"
+            "4. Click 🎤↺ to restart the microphone"
+        ),
+        "de": (
+            "Windows Mikrofon-Einstellungen wurden geöffnet.\n\n"
+            "1. Sicherstellen dass 'Mikrofon-Zugriff' aktiviert ist\n"
+            "2. 'Apps Zugriff auf Ihr Mikrofon erlauben' aktivieren\n"
+            "3. Dieses Fenster schließen\n"
+            "4. Auf 🎤↺ klicken um das Mikrofon neu zu starten"
+        ),
+        "fr": (
+            "Les paramètres du microphone Windows ont été ouverts.\n\n"
+            "1. S'assurer que 'Accès au microphone' est activé\n"
+            "2. Activer 'Autoriser les applis à accéder au microphone'\n"
+            "3. Fermer cette fenêtre\n"
+            "4. Cliquer sur 🎤↺ pour redémarrer le microphone"
+        ),
+        "es": (
+            "Se han abierto los ajustes del micrófono de Windows.\n\n"
+            "1. Asegurarse de que 'Acceso al micrófono' está activado\n"
+            "2. Activar 'Permitir a las apps acceder al micrófono'\n"
+            "3. Cerrar esa ventana\n"
+            "4. Hacer clic en 🎤↺ para reiniciar el micrófono"
+        ),
+    },
+    # ── Log messages (keep short) ──────────────────────────────────────────────
+    "log_no_signal": {
+        "en": "No mic signal", "de": "Kein Mic-Signal",
+        "fr": "Pas de signal micro", "es": "Sin señal de mic",
+    },
+    "log_restarting": {
+        "en": "Restarting mic (too many silent recordings)...",
+        "de": "Starte Mikrofon-Neustart (zu viele stille Aufnahmen)...",
+        "fr": "Redémarrage micro (trop d'enregistrements silencieux)...",
+        "es": "Reiniciando mic (demasiadas grabaciones silenciosas)...",
+    },
+    "log_too_short": {
+        "en": "Recording too short – ignored.",
+        "de": "Aufnahme zu kurz – ignoriert.",
+        "fr": "Enregistrement trop court – ignoré.",
+        "es": "Grabación demasiada corta – ignorada.",
+    },
+    "log_no_text": {
+        "en": "No text recognized.",
+        "de": "Kein Text erkannt.",
+        "fr": "Aucun texte reconnu.",
+        "es": "No se reconoció texto.",
+    },
 }
 
-# ─── Maustasten-Mapping ────────────────────────────────────────────────────────
-# pynput Button → lesbarer Name (für hotkey-String)
+# UI language options shown in the dropdown
+UI_LANGUAGES = {
+    "English":  "en",
+    "Deutsch":  "de",
+    "Français": "fr",
+    "Español":  "es",
+}
+
+# Whisper recognition language options (language-code only, labels built per UI lang below)
+RECOG_LANGUAGES_CODES = {
+    "auto": None, "de": "de", "en": "en", "fr": "fr", "es": "es",
+    "it": "it", "nl": "nl", "pl": "pl", "ru": "ru",
+    "zh": "zh", "ja": "ja", "tr": "tr",
+}
+
+def _recog_lang_labels(ui: str) -> dict:
+    """Return recognition language labels in the current UI language."""
+    labels = {
+        "en": {
+            "auto": "Auto-detect", "de": "German", "en": "English",
+            "fr": "French", "es": "Spanish", "it": "Italian",
+            "nl": "Dutch", "pl": "Polish", "ru": "Russian",
+            "zh": "Chinese", "ja": "Japanese", "tr": "Turkish",
+        },
+        "de": {
+            "auto": "Automatisch", "de": "Deutsch", "en": "Englisch",
+            "fr": "Französisch", "es": "Spanisch", "it": "Italienisch",
+            "nl": "Niederländisch", "pl": "Polnisch", "ru": "Russisch",
+            "zh": "Chinesisch", "ja": "Japanisch", "tr": "Türkisch",
+        },
+        "fr": {
+            "auto": "Automatique", "de": "Allemand", "en": "Anglais",
+            "fr": "Français", "es": "Espagnol", "it": "Italien",
+            "nl": "Néerlandais", "pl": "Polonais", "ru": "Russe",
+            "zh": "Chinois", "ja": "Japonais", "tr": "Turc",
+        },
+        "es": {
+            "auto": "Automático", "de": "Alemán", "en": "Inglés",
+            "fr": "Francés", "es": "Español", "it": "Italiano",
+            "nl": "Holandés", "pl": "Polaco", "ru": "Ruso",
+            "zh": "Chino", "ja": "Japonés", "tr": "Turco",
+        },
+    }
+    return labels.get(ui, labels["en"])
+
+MODELS = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
+DEVICES = {"auto": "Auto", "cuda": "NVIDIA CUDA", "dml": "NPU / DirectML", "cpu": "CPU"}
+COMPUTE_TYPES = {"auto": "Auto", "float16": "float16 (GPU)", "int8": "int8", "float32": "float32 (CPU)"}
 
 MOUSE_BTN_NAMES = {
-    pynput_ms.Button.left:    "mouse_left",
-    pynput_ms.Button.right:   "mouse_right",
-    pynput_ms.Button.middle:  "mouse_middle",
-    pynput_ms.Button.x1:      "mouse_x1",   # Daumentaste zurück
-    pynput_ms.Button.x2:      "mouse_x2",   # Daumentaste vor
-}
-MOUSE_BTN_LABELS = {
-    "mouse_left":   "Maus Links",
-    "mouse_right":  "Maus Rechts",
-    "mouse_middle": "Maus Mitte",
-    "mouse_x1":     "Daumentaste Zurück",
-    "mouse_x2":     "Daumentaste Vor",
+    pynput_ms.Button.left:   "mouse_left",
+    pynput_ms.Button.right:  "mouse_right",
+    pynput_ms.Button.middle: "mouse_middle",
+    pynput_ms.Button.x1:     "mouse_x1",
+    pynput_ms.Button.x2:     "mouse_x2",
 }
 
-# ─── Globaler State ─────────────────────────────────────────────────────────────
+# ─── Global State ───────────────────────────────────────────────────────────────
 
-recording      = False
-audio_chunks   = []
-record_lock    = threading.Lock()
-whisper_model  = None
-current_volume = 0.0
-ui_queue       = queue.Queue()
-cfg            = dict(DEFAULTS)
+recording       = False
+audio_chunks    = []
+record_lock     = threading.Lock()
+whisper_model   = None
+current_volume  = 0.0
+ui_queue        = queue.Queue()
+cfg             = dict(DEFAULTS)
 
-# Aktiver PTT-Listener (pynput)
-_ptt_kb_listener  = None
-_ptt_ms_listener  = None
-_ptt_active       = False   # True = Hotkey gerade gedrückt
+_ptt_kb_listener = None
+_ptt_ms_listener = None
+_ptt_active      = False
+
+_silent_count    = 0
+SILENT_THRESHOLD = 3
+MIC_OK           = True
+_audio_stream    = None
+
+# ─── Translation helper ────────────────────────────────────────────────────────
+
+def T(key: str, lang: str = None) -> str:
+    """Return translated string for current UI language."""
+    l = lang or cfg.get("ui_lang", "en")
+    entry = TRANSLATIONS.get(key, {})
+    return entry.get(l, entry.get("en", key))
 
 # ─── Settings ──────────────────────────────────────────────────────────────────
 
@@ -128,9 +551,9 @@ def save_settings():
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2, ensure_ascii=False)
     except Exception as e:
-        _log(f"Settings-Fehler: {e}")
+        print(f"Settings error: {e}")
 
-# ─── Hardware-Erkennung ────────────────────────────────────────────────────────
+# ─── Hardware detection ────────────────────────────────────────────────────────
 
 def detect_devices() -> dict:
     r = {"cuda": False, "dml": False, "cuda_name": "", "npu_name": ""}
@@ -167,93 +590,139 @@ def resolve_device(dev_cfg, compute_cfg):
     if compute_cfg != "auto": c = compute_cfg
     return d, c
 
-# ─── Modell laden ──────────────────────────────────────────────────────────────
+# ─── Model loading ─────────────────────────────────────────────────────────────
 
 def load_model(status_cb=None):
     global whisper_model
-    if status_cb: status_cb("loading", f"Lade '{cfg['model']}'...")
+    if status_cb: status_cb("loading", f"Loading '{cfg['model']}'...")
     d, c = resolve_device(cfg["device"], cfg["compute_type"])
-    lbl  = {"cuda": "CUDA", "dml": "NPU/DirectML", "cpu": "CPU"}.get(d, d)
-    _log(f"ℹ️  Gerät: {lbl} | Compute: {c} | Modell: {cfg['model']}")
+    lbl  = {"cuda": "CUDA (NVIDIA)", "dml": "NPU/DirectML", "cpu": "CPU"}.get(d, d)
+    _log(f"ℹ️  Device: {lbl} | Compute: {c} | Model: {cfg['model']}")
     try:
         from faster_whisper import WhisperModel
         whisper_model = WhisperModel(cfg["model"], device=d, compute_type=c,
                                      download_root=MODEL_CACHE_DIR)
-        if status_cb: status_cb("ready", f"Bereit  [{lbl}]")
-        _log(f"✅ Modell geladen auf {lbl}")
+        if status_cb: status_cb("ready", f"{T('ready')}  [{lbl}]")
+        _log(f"✅ Model loaded on {lbl}")
     except Exception as e:
-        _log(f"⚠️  {lbl} fehlgeschlagen: {e}")
+        _log(f"⚠️  {lbl} failed: {e}")
         try:
             from faster_whisper import WhisperModel
             whisper_model = WhisperModel(cfg["model"], device="cpu", compute_type="int8",
                                          download_root=MODEL_CACHE_DIR)
-            if status_cb: status_cb("ready", "Bereit  [CPU Fallback]")
-            _log("✅ CPU-Fallback aktiv")
+            if status_cb: status_cb("ready", f"{T('ready')}  [CPU Fallback]")
+            _log("✅ CPU fallback active")
         except Exception as e2:
-            if status_cb: status_cb("error", "Ladefehler!")
-            _log(f"❌ Fehler: {e2}")
+            if status_cb: status_cb("error", T("load_error"))
+            _log(f"❌ Error: {e2}")
 
 def _log(msg):
     ui_queue.put(("log", msg))
 
-# ─── Hotkey-Parser ─────────────────────────────────────────────────────────────
+# ─── Windows mic permission ────────────────────────────────────────────────────
+
+def request_windows_mic_permission():
+    _log("🔑 Requesting microphone permission...")
+    try:
+        import winrt.windows.media.capture as wmc
+        import asyncio
+        async def _req():
+            cap = wmc.MediaCapture()
+            s   = wmc.MediaCaptureInitializationSettings()
+            s.stream_type = wmc.StreamingCaptureMode.AUDIO
+            await cap.initialize_async(s)
+            await cap.close_async()
+        asyncio.run(_req())
+        _log("✅ Mic permission granted via winrt.")
+        return True
+    except ImportError:
+        pass
+    except Exception as e:
+        _log(f"⚠️  winrt failed: {e}")
+    try:
+        import winreg
+        key_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, "Value", 0, winreg.REG_SZ, "Allow")
+        _log("✅ Mic permission set via registry.")
+        return True
+    except Exception as e:
+        _log(f"⚠️  Registry fix failed: {e}")
+    try:
+        subprocess.Popen(["ms-settings:privacy-microphone"],
+                         shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        _log("ℹ️  Windows mic settings opened.")
+        ui_queue.put(("mic_permission_dialog", None))
+    except Exception:
+        pass
+    return False
+
+def start_audio_stream():
+    global _audio_stream, MIC_OK, _silent_count
+    if _audio_stream is not None:
+        try: _audio_stream.stop(); _audio_stream.close()
+        except Exception: pass
+        _audio_stream = None
+    try:
+        _audio_stream = sd.InputStream(
+            samplerate=16000, channels=1, dtype="float32",
+            callback=audio_callback, blocksize=512,
+        )
+        _audio_stream.start()
+        _silent_count = 0; MIC_OK = True
+        _log("✅ Audio stream started.")
+        ui_queue.put(("mic_ok", None))
+        return True
+    except Exception as e:
+        MIC_OK = False
+        _log(f"❌ Audio stream error: {e}")
+        ui_queue.put(("mic_error", str(e)))
+        return False
+
+def restart_audio_stream():
+    _log("🔄 Restarting microphone...")
+    request_windows_mic_permission()
+    time.sleep(0.5)
+    if start_audio_stream():
+        ui_queue.put(("status", "ready", T("ready")))
+    else:
+        ui_queue.put(("status", "error", T("mic_error")))
+
+# ─── Hotkey / PTT ──────────────────────────────────────────────────────────────
 
 def parse_hotkey(hk_str: str) -> dict:
-    """
-    Zerlegt einen Hotkey-String in Modifier-Keys und Haupttaste.
-    Beispiele:
-      "ctrl+alt+space"    → {mods: {"ctrl","alt"}, key: "space", mouse: None}
-      "ctrl+mouse_x1"     → {mods: {"ctrl"},        key: None,   mouse: "mouse_x1"}
-      "mouse_x2"          → {mods: set(),           key: None,   mouse: "mouse_x2"}
-    """
     parts   = [p.strip().lower() for p in hk_str.split("+")]
     mod_set = {"ctrl", "alt", "shift", "cmd"}
-    mods    = set()
-    main    = None
-    mouse   = None
-
+    mods, main, mouse = set(), None, None
     for p in parts:
-        if p in mod_set:
-            mods.add(p)
-        elif p.startswith("mouse_"):
-            mouse = p
-        else:
-            main = p
-
+        if p in mod_set:       mods.add(p)
+        elif p.startswith("mouse_"): mouse = p
+        else:                  main = p
     return {"mods": mods, "key": main, "mouse": mouse}
 
 def _pynput_key_name(key) -> str:
-    """pynput Key-Objekt → lesbarer String (passt zu parse_hotkey)."""
     try:
-        # Normale Zeichen-Taste
         return key.char.lower()
     except AttributeError:
-        # Sonder-/Modifier-Taste
         name = str(key).replace("Key.", "").lower()
-        # Normalisierungen
-        name = name.replace("ctrl_l", "ctrl").replace("ctrl_r", "ctrl")
-        name = name.replace("alt_l",  "alt" ).replace("alt_r",  "alt" )
-        name = name.replace("shift",  "shift")
-        name = name.replace("cmd",    "cmd"  )
+        for old, new in [("ctrl_l","ctrl"),("ctrl_r","ctrl"),
+                         ("alt_l","alt"),("alt_r","alt"),("alt_gr","alt"),
+                         ("shift_l","shift"),("shift_r","shift"),
+                         ("cmd_l","cmd"),("cmd_r","cmd")]:
+            name = name.replace(old, new)
         return name
 
-# ─── PTT-Listener (pynput – unterstützt Keyboard + Mouse) ─────────────────────
-
 def start_ptt_listener():
-    """Startet den globalen PTT-Listener. Unterstützt keyboard- und mouse-Hotkeys."""
     global _ptt_kb_listener, _ptt_ms_listener
     stop_ptt_listener()
-
     hk        = parse_hotkey(cfg["hotkey"])
     mod_mods  = hk["mods"]
     hk_key    = hk["key"]
     hk_mouse  = hk["mouse"]
-    held_keys = set()   # aktuell gedrückte Modifier
+    held_keys = set()
 
     def mods_ok():
         return mod_mods.issubset(held_keys)
-
-    # ── Keyboard-Listener ─────────────────────────────────────────────────────
 
     def on_kb_press(key):
         kn = _pynput_key_name(key)
@@ -267,25 +736,15 @@ def start_ptt_listener():
             _ptt_trigger_release()
         held_keys.discard(kn)
 
-    _ptt_kb_listener = pynput_kb.Listener(
-        on_press=on_kb_press, on_release=on_kb_release, daemon=True
-    )
+    _ptt_kb_listener = pynput_kb.Listener(on_press=on_kb_press, on_release=on_kb_release, daemon=True)
     _ptt_kb_listener.start()
 
-    # ── Mouse-Listener (nur wenn Hotkey eine Maustaste enthält) ───────────────
-
     if hk_mouse:
-        target_btn = next(
-            (b for b, n in MOUSE_BTN_NAMES.items() if n == hk_mouse), None
-        )
-
+        target_btn = next((b for b, n in MOUSE_BTN_NAMES.items() if n == hk_mouse), None)
         def on_ms_press(x, y, button, pressed):
             if button == target_btn:
-                if pressed and mods_ok():
-                    _ptt_trigger_press()
-                elif not pressed:
-                    _ptt_trigger_release()
-
+                if pressed and mods_ok(): _ptt_trigger_press()
+                elif not pressed:         _ptt_trigger_release()
         _ptt_ms_listener = pynput_ms.Listener(on_click=on_ms_press, daemon=True)
         _ptt_ms_listener.start()
 
@@ -295,20 +754,17 @@ def stop_ptt_listener():
         if lst:
             try: lst.stop()
             except Exception: pass
-    _ptt_kb_listener = None
-    _ptt_ms_listener = None
+    _ptt_kb_listener = None; _ptt_ms_listener = None
 
 def _ptt_trigger_press():
     global _ptt_active
     if not _ptt_active and whisper_model is not None:
-        _ptt_active = True
-        start_recording()
+        _ptt_active = True; start_recording()
 
 def _ptt_trigger_release():
     global _ptt_active
     if _ptt_active:
-        _ptt_active = False
-        stop_recording()
+        _ptt_active = False; stop_recording()
         threading.Thread(target=transcribe_and_paste, daemon=True).start()
 
 # ─── Audio ─────────────────────────────────────────────────────────────────────
@@ -316,6 +772,8 @@ def _ptt_trigger_release():
 def audio_callback(indata, frames, time_info, status):
     global current_volume
     current_volume = min(float(np.sqrt(np.mean(indata ** 2))) * 8.0, 1.0)
+    if status:
+        ui_queue.put(("mic_stream_error", str(status)))
     if recording:
         audio_chunks.append(indata.copy())
 
@@ -323,14 +781,14 @@ def start_recording():
     global recording, audio_chunks
     with record_lock:
         audio_chunks = []; recording = True
-    ui_queue.put(("status", "record", "Aufnahme..."))
+    ui_queue.put(("status", "record", T("recording")))
     if cfg["sound_feedback"]: _beep(660, 0.08)
 
 def stop_recording():
     global recording
     with record_lock:
         recording = False
-    ui_queue.put(("status", "process", "Verarbeite..."))
+    ui_queue.put(("status", "process", T("processing")))
     if cfg["sound_feedback"]: _beep(880, 0.10)
 
 def _beep(freq=880, dur=0.08, vol=0.3):
@@ -341,18 +799,32 @@ def _beep(freq=880, dur=0.08, vol=0.3):
     except Exception:
         pass
 
-# ─── Transkription ─────────────────────────────────────────────────────────────
+# ─── Transcription ─────────────────────────────────────────────────────────────
 
 def transcribe_and_paste():
+    global _silent_count
     with record_lock:
         chunks = list(audio_chunks)
     if not chunks:
-        ui_queue.put(("status", "ready", "Bereit")); return
+        ui_queue.put(("status", "ready", T("ready"))); return
 
     audio_data = np.concatenate(chunks, axis=0).flatten().astype(np.float32)
+
+    if float(np.max(np.abs(audio_data))) < 0.001:
+        _silent_count += 1
+        _log(f"⚠️  {T('log_no_signal')} ({_silent_count}/{SILENT_THRESHOLD})")
+        if _silent_count >= SILENT_THRESHOLD:
+            _silent_count = 0
+            _log(T("log_restarting"))
+            ui_queue.put(("status", "error", T("mic_error")))
+            threading.Thread(target=restart_audio_stream, daemon=True).start()
+        ui_queue.put(("status", "ready", T("ready"))); return
+    else:
+        _silent_count = 0
+
     if len(audio_data) / 16000 < 0.3:
-        ui_queue.put(("status", "ready", "Bereit"))
-        _log("⚠️  Aufnahme zu kurz – ignoriert."); return
+        ui_queue.put(("status", "ready", T("ready")))
+        _log(T("log_too_short")); return
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp_path = tmp.name
@@ -360,9 +832,16 @@ def transcribe_and_paste():
 
     try:
         t0 = time.time()
+        in_lang  = cfg["language"] or None   # None = auto-detect
+        out_lang = cfg.get("output_language", "same")
+        # task="translate" makes Whisper translate output to English
+        task = "translate" if (out_lang == "en" and in_lang != "en") else "transcribe"
+        if task == "translate":
+            _log("🌐 Translation mode: → English")
         seg, _ = whisper_model.transcribe(
             tmp_path,
-            language=cfg["language"] or None,
+            language=in_lang,
+            task=task,
             beam_size=cfg["beam_size"],
             vad_filter=cfg["vad_filter"],
             vad_parameters=dict(min_silence_duration_ms=cfg["vad_silence_ms"]),
@@ -371,16 +850,15 @@ def transcribe_and_paste():
         elapsed = time.time() - t0
 
         if not text:
-            _log("⚠️  Kein Text erkannt.")
-            ui_queue.put(("status", "ready", "Bereit")); return
+            _log(T("log_no_text"))
+            ui_queue.put(("status", "ready", T("ready"))); return
 
-        # Erkannten Text separat senden (ohne Timestamp → für Copy)
         ui_queue.put(("recognized", text))
-        ui_queue.put(("status", "ready", f"Bereit  ({elapsed:.1f}s)"))
+        ui_queue.put(("status", "ready", f"{T('ready')}  ({elapsed:.1f}s)"))
         _do_paste(text)
     except Exception as e:
-        _log(f"❌ Fehler: {e}")
-        ui_queue.put(("status", "ready", "Bereit"))
+        _log(f"❌ Error: {e}")
+        ui_queue.put(("status", "ready", T("ready")))
     finally:
         try: os.unlink(tmp_path)
         except Exception: pass
@@ -393,20 +871,22 @@ def _do_paste(text: str):
     else:
         pyautogui.write(text, interval=0.01)
 
-# ─── Hilfsfunktionen ───────────────────────────────────────────────────────────
+# ─── UI helpers ────────────────────────────────────────────────────────────────
 
 def _lighten(hex_c: str, f=1.3) -> str:
     h = hex_c.lstrip("#")
     r, g, b = (int(h[i:i+2], 16) for i in (0, 2, 4))
     return "#{:02x}{:02x}{:02x}".format(min(255,int(r*f)), min(255,int(g*f)), min(255,int(b*f)))
 
-def _section(parent, text):
+def _section(parent, key):
+    text = T(key) if key in TRANSLATIONS else key
     if text:
         tk.Label(parent, text=text, bg=C["bg"], fg=C["dim"],
                  font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(10,0))
     tk.Frame(parent, bg=C["sep"], height=1).pack(fill="x", pady=(2,4))
 
-def _flat_btn(parent, text, color, cmd, padx=8, pady=4):
+def _flat_btn(parent, key, color, cmd, padx=8, pady=4):
+    text = T(key) if key in TRANSLATIONS else key
     f = tk.Frame(parent, bg=color, cursor="hand2")
     l = tk.Label(f, text=text, bg=color, fg=C["text"],
                  font=("Segoe UI", 8, "bold"), padx=padx, pady=pady, cursor="hand2")
@@ -421,15 +901,12 @@ def _flat_btn(parent, text, color, cmd, padx=8, pady=4):
     return f
 
 def _make_text_widget(parent, height=5):
-    """Erstellt ein Text-Widget, das Markieren erlaubt ohne Fenster zu verschieben."""
     tf = tk.Frame(parent, bg=C["bg2"], highlightthickness=1,
                   highlightbackground=C["sep"])
     tf.pack(fill="both", expand=True, pady=(2,4))
-
     sb = tk.Scrollbar(tf, bg=C["bg"], troughcolor=C["bg2"],
                       relief="flat", bd=0, width=10)
     sb.pack(side="right", fill="y")
-
     txt = tk.Text(
         tf, height=height, width=36,
         bg=C["bg2"], fg=C["text"],
@@ -440,32 +917,28 @@ def _make_text_widget(parent, height=5):
     )
     txt.pack(side="left", fill="both", expand=True)
     sb.config(command=txt.yview)
-
-    # WICHTIG: Maus-Events auf dem Text-Widget NICHT an Root weiterleiten
-    # → verhindert Fenster-Drag beim Markieren von Text
-    txt.bind("<ButtonPress-1>",   lambda e: "break" if False else None)
-    txt.bind("<B1-Motion>",       lambda e: None)   # normale Selektion erlaubt
+    txt.bind("<ButtonPress-1>",   lambda e: None)
+    txt.bind("<B1-Motion>",       lambda e: None)
     txt.bind("<ButtonRelease-1>", lambda e: None)
-
     return txt
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Haupt-Overlay
+#  Main Overlay
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class WhisperPTTApp:
 
     STATUS_COLORS = {
-        "idle":    C["idle"],   "loading": C["process"],
-        "ready":   C["ready"],  "record":  C["record"],
-        "process": C["process"],"error":   C["record"],
+        "idle":    C["idle"],    "loading": C["process"],
+        "ready":   C["ready"],   "record":  C["record"],
+        "process": C["process"], "error":   C["record"],
     }
 
     def __init__(self, root: tk.Tk):
         self.root          = root
         self._minimized    = False
         self._settings_win = None
-        self._clean_texts  = []     # Nur erkannter Text, ohne Timestamps
+        self._clean_texts  = []
 
         self._build_window()
         self._build_ui()
@@ -478,8 +951,6 @@ class WhisperPTTApp:
             daemon=True,
         ).start()
         threading.Thread(target=start_ptt_listener, daemon=True).start()
-
-    # ── Fenster ────────────────────────────────────────────────────────────────
 
     def _build_window(self):
         self.root.title("Whisper PTT")
@@ -495,14 +966,12 @@ class WhisperPTTApp:
             sw = self.root.winfo_screenwidth()
             self.root.geometry(f"+{sw - 370}+20")
 
-    # ── UI ─────────────────────────────────────────────────────────────────────
-
     def _build_ui(self):
         outer = tk.Frame(self.root, bg=C["bg"],
                          highlightbackground=C["sep"], highlightthickness=1)
         outer.pack(fill="both", expand=True)
 
-        # Titelleiste – NUR hier ist Drag aktiviert
+        # Title bar – drag only here
         self._bar = tk.Frame(outer, bg=C["accent"], height=30)
         self._bar.pack(fill="x")
         self._bar.bind("<ButtonPress-1>",   self._drag_start)
@@ -521,11 +990,11 @@ class WhisperPTTApp:
             lb.bind("<Enter>",    lambda e, l=lb: l.config(fg=C["text"]))
             lb.bind("<Leave>",    lambda e, l=lb: l.config(fg=C["dim"]))
 
-        # Content – KEIN Drag hier
+        # Content – no drag
         self.content = tk.Frame(outer, bg=C["bg"], padx=10, pady=8)
         self.content.pack(fill="both", expand=True)
 
-        # Status-Zeile
+        # Status row
         row = tk.Frame(self.content, bg=C["bg"])
         row.pack(fill="x", pady=(0, 5))
 
@@ -534,7 +1003,7 @@ class WhisperPTTApp:
         self.dot_cv.pack(side="left")
         self._dot = self.dot_cv.create_oval(2, 2, 12, 12, fill=C["idle"], outline="")
 
-        self.status_lbl = tk.Label(row, text="Initialisiere...",
+        self.status_lbl = tk.Label(row, text=T("initializing"),
                                    bg=C["bg"], fg=C["dim"],
                                    font=("Segoe UI", 9))
         self.status_lbl.pack(side="left", padx=(6, 0))
@@ -546,13 +1015,20 @@ class WhisperPTTApp:
         gear.bind("<Enter>",    lambda e: gear.config(fg=C["text"]))
         gear.bind("<Leave>",    lambda e: gear.config(fg=C["dim"]))
 
+        self.mic_btn = tk.Label(row, text="🎤↺", bg=C["bg"], fg=C["dim"],
+                                font=("Segoe UI", 11), cursor="hand2")
+        self.mic_btn.pack(side="right", padx=(0, 2))
+        self.mic_btn.bind("<Button-1>", lambda e: self._retry_mic())
+        self.mic_btn.bind("<Enter>",    lambda e: self.mic_btn.config(fg=C["process"]))
+        self.mic_btn.bind("<Leave>",    lambda e: self.mic_btn.config(fg=C["dim"]))
+
         self.hotkey_lbl = tk.Label(row, text=cfg["hotkey"],
                                    bg=C["bg"], fg=C["dim"],
                                    font=("Segoe UI", 8))
         self.hotkey_lbl.pack(side="right", padx=(0, 4))
 
-        # Voice-Meter
-        tk.Label(self.content, text="MIKROFON", bg=C["bg"], fg=C["dim"],
+        # Voice meter
+        tk.Label(self.content, text=T("microphone"), bg=C["bg"], fg=C["dim"],
                  font=("Segoe UI", 7, "bold")).pack(anchor="w")
         self.meter_cv = tk.Canvas(self.content, height=16, bg=C["bg3"],
                                   highlightthickness=1, highlightbackground=C["sep"])
@@ -562,69 +1038,58 @@ class WhisperPTTApp:
 
         tk.Frame(self.content, bg=C["sep"], height=1).pack(fill="x", pady=(0, 6))
 
-        # ── Feld 1: Erkannter Text ─────────────────────────────────────────────
-        tk.Label(self.content, text="ERKANNTER TEXT", bg=C["bg"], fg=C["dim"],
+        # Panel 1: Recognized text
+        tk.Label(self.content, text=T("recognized_text"), bg=C["bg"], fg=C["dim"],
                  font=("Segoe UI", 7, "bold")).pack(anchor="w")
-
         self.recog_txt = _make_text_widget(self.content, height=5)
 
-        # Buttons für erkannten Text
         br1 = tk.Frame(self.content, bg=C["bg"])
         br1.pack(fill="x", pady=(0, 6))
-        _flat_btn(br1, "📋 Kopieren", C["btn_copy"],  self._copy_recog ).pack(side="left", padx=(0,4))
-        _flat_btn(br1, "📌 Einfügen", C["btn_paste"], self._paste_recog).pack(side="left", padx=(0,4))
-        _flat_btn(br1, "🗑️ Leeren",  C["btn_clear"], self._clear_recog).pack(side="right")
+        _flat_btn(br1, "btn_copy",  C["btn_copy"],  self._copy_recog ).pack(side="left", padx=(0,4))
+        _flat_btn(br1, "btn_paste", C["btn_paste"], self._paste_recog).pack(side="left", padx=(0,4))
+        _flat_btn(br1, "btn_clear", C["btn_clear"], self._clear_recog).pack(side="right")
 
         tk.Frame(self.content, bg=C["sep"], height=1).pack(fill="x", pady=(0, 6))
 
-        # ── Feld 2: Debug / Log ────────────────────────────────────────────────
-        tk.Label(self.content, text="DEBUG / LOG", bg=C["bg"], fg=C["dim"],
+        # Panel 2: Debug / Log
+        tk.Label(self.content, text=T("debug_log"), bg=C["bg"], fg=C["dim"],
                  font=("Segoe UI", 7, "bold")).pack(anchor="w")
-
         self.debug_txt = _make_text_widget(self.content, height=4)
-        self.debug_txt.config(fg=C["dim"])   # etwas gedimmter
+        self.debug_txt.config(fg=C["dim"])
 
         br2 = tk.Frame(self.content, bg=C["bg"])
         br2.pack(fill="x", pady=(0, 0))
-        _flat_btn(br2, "🗑️ Log leeren", C["btn_clear"], self._clear_debug).pack(side="right")
+        _flat_btn(br2, "btn_clear_log", C["btn_clear"], self._clear_debug).pack(side="right")
 
-    # ── Drag (nur Titelleiste) ─────────────────────────────────────────────────
+    # ── Drag (title bar only) ──────────────────────────────────────────────────
 
-    def _drag_start(self, e):
-        self._dx = e.x; self._dy = e.y
-
+    def _drag_start(self, e): self._dx = e.x; self._dy = e.y
     def _drag_motion(self, e):
         x = self.root.winfo_x() + (e.x - self._dx)
         y = self.root.winfo_y() + (e.y - self._dy)
         self.root.geometry(f"+{x}+{y}")
-
     def _drag_end(self, e):
         cfg["window_x"] = self.root.winfo_x()
         cfg["window_y"] = self.root.winfo_y()
         save_settings()
 
-    # ── Aktionen: Erkannter Text ───────────────────────────────────────────────
+    # ── Actions ────────────────────────────────────────────────────────────────
 
     def _copy_recog(self):
-        """Kopiert Selektion ODER den saubersten verfügbaren Text – KEIN Timestamp."""
-        try:
-            text = self.recog_txt.get("sel.first", "sel.last")
-        except tk.TclError:
-            # Keine Selektion → letzten erkannten Text aus _clean_texts
-            text = self._clean_texts[-1] if self._clean_texts else \
-                   self.recog_txt.get("1.0", "end-1c").strip()
+        try:    text = self.recog_txt.get("sel.first", "sel.last")
+        except: text = self._clean_texts[-1] if self._clean_texts else \
+                        self.recog_txt.get("1.0", "end-1c").strip()
         if text:
             pyperclip.copy(text)
-            self._flash("📋 Kopiert!")
+            self._flash(T("flash_copied"))
 
     def _paste_recog(self):
-        """Fügt letzten erkannten Text in aktives Fenster ein."""
         text = self._clean_texts[-1] if self._clean_texts else \
                self.recog_txt.get("1.0", "end-1c").strip()
         if text:
             pyperclip.copy(text)
             self.root.after(150, lambda: pyautogui.hotkey("ctrl", "v"))
-            self._flash("📌 Eingefügt!")
+            self._flash(T("flash_pasted"))
 
     def _clear_recog(self):
         self._clean_texts.clear()
@@ -640,7 +1105,10 @@ class WhisperPTTApp:
         self.status_lbl.config(text=msg, fg=C["ready"])
         self.root.after(ms, lambda: self.status_lbl.config(text=old, fg=C["dim"]))
 
-    # ── Minimize / Close ───────────────────────────────────────────────────────
+    def _retry_mic(self):
+        self.mic_btn.config(fg=C["process"])
+        self._set_status("process", T("mic_restart"))
+        threading.Thread(target=restart_audio_stream, daemon=True).start()
 
     def _toggle_min(self):
         self._minimized = not self._minimized
@@ -652,9 +1120,12 @@ class WhisperPTTApp:
         cfg["window_y"] = self.root.winfo_y()
         save_settings()
         stop_ptt_listener()
+        if _audio_stream is not None:
+            try: _audio_stream.stop(); _audio_stream.close()
+            except Exception: pass
         self.root.destroy()
 
-    # ── Queue-Polling ──────────────────────────────────────────────────────────
+    # ── Queue polling ──────────────────────────────────────────────────────────
 
     def _poll_queue(self):
         try:
@@ -666,9 +1137,19 @@ class WhisperPTTApp:
                     self._append_recognized(msg[1])
                 elif msg[0] == "log":
                     self._append_log(msg[1])
+                elif msg[0] == "mic_ok":
+                    self.mic_btn.config(fg=C["dim"])
+                elif msg[0] in ("mic_error", "mic_stream_error"):
+                    self.mic_btn.config(fg=C["record"])
+                    self._append_log(f"🎤 Mic error: {msg[1]}")
+                elif msg[0] == "mic_permission_dialog":
+                    self._show_permission_hint()
         except queue.Empty:
             pass
         self.root.after(50, self._poll_queue)
+
+    def _show_permission_hint(self):
+        messagebox.showinfo(T("mic_perm_title"), T("mic_perm_msg"), parent=self.root)
 
     def _set_status(self, state, text):
         color = self.STATUS_COLORS.get(state, C["idle"])
@@ -684,23 +1165,18 @@ class WhisperPTTApp:
         self.root.after(400, lambda: self._pulse(color, step+1))
 
     def _append_recognized(self, text: str):
-        """Fügt erkannten Text ins obere Feld ein – NUR Text, kein Timestamp."""
         self._clean_texts.append(text)
         self.recog_txt.config(state="normal")
-        # Trennlinie wenn schon Inhalt vorhanden
         if self.recog_txt.index("end-1c") != "1.0":
             self.recog_txt.insert("end", "\n─────\n")
         self.recog_txt.insert("end", text)
         self.recog_txt.see("end")
 
     def _append_log(self, text: str):
-        """Fügt Debug-Nachricht mit Timestamp ins untere Feld ein."""
         self.debug_txt.config(state="normal")
         ts = time.strftime("%H:%M:%S")
         self.debug_txt.insert("end", f"[{ts}] {text}\n")
         self.debug_txt.see("end")
-
-    # ── Meter-Animation ────────────────────────────────────────────────────────
 
     def _animate_meter(self):
         try:
@@ -716,7 +1192,6 @@ class WhisperPTTApp:
     # ── Settings ───────────────────────────────────────────────────────────────
 
     def _open_settings(self):
-        # Fix: Fenster immer neu öffnen / nach vorne bringen
         if self._settings_win is not None:
             try:
                 if self._settings_win.win.winfo_exists():
@@ -726,7 +1201,6 @@ class WhisperPTTApp:
             except Exception:
                 pass
             self._settings_win = None
-
         self._settings_win = SettingsWindow(
             self.root,
             on_save_cb=self._on_settings_saved,
@@ -734,7 +1208,6 @@ class WhisperPTTApp:
         )
 
     def _on_settings_closed(self):
-        """Callback wenn Settings-Fenster geschlossen wird."""
         self._settings_win = None
 
     def _on_settings_saved(self):
@@ -750,23 +1223,23 @@ class WhisperPTTApp:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Settings-Fenster
+#  Settings Window
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class SettingsWindow:
 
     def __init__(self, parent, on_save_cb, on_close_cb):
-        self.parent             = parent
-        self.on_save_cb         = on_save_cb
-        self.on_close_cb        = on_close_cb
-        self._rec_kb_listener   = None
-        self._rec_ms_listener   = None
-        self._recording_hotkey  = False
-        self._held_kb           = set()
-        self._held_ms           = set()
+        self.parent            = parent
+        self.on_save_cb        = on_save_cb
+        self.on_close_cb       = on_close_cb
+        self._rec_kb_listener  = None
+        self._rec_ms_listener  = None
+        self._recording_hotkey = False
+        self._held_kb          = set()
+        self._held_ms          = set()
 
         self.win = tk.Toplevel(parent)
-        self.win.title("Einstellungen – Whisper PTT")
+        self.win.title(T("settings_win_title"))
         self.win.configure(bg=C["bg"])
         self.win.attributes("-topmost", True)
         self.win.resizable(False, False)
@@ -774,7 +1247,7 @@ class SettingsWindow:
         self.win.protocol("WM_DELETE_WINDOW", self._on_close)
 
         px, py = parent.winfo_x(), parent.winfo_y()
-        self.win.geometry(f"450x600+{max(0, px-460)}+{py}")
+        self.win.geometry(f"460x700+{max(0, px-470)}+{py}")
 
         self._build()
         self._load_values()
@@ -791,7 +1264,7 @@ class SettingsWindow:
         main = tk.Frame(self.win, bg=C["bg"], padx=14, pady=10)
         main.pack(fill="both", expand=True)
 
-        tk.Label(main, text="⚙  Einstellungen",
+        tk.Label(main, text=T("settings_title"),
                  bg=C["bg"], fg=C["text"],
                  font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0,8))
 
@@ -808,9 +1281,9 @@ class SettingsWindow:
         nb = ttk.Notebook(main)
         nb.pack(fill="both", expand=True, pady=(0,10))
 
-        t1 = ttk.Frame(nb); nb.add(t1, text="  Allgemein  ")
-        t2 = ttk.Frame(nb); nb.add(t2, text="  Audio / KI  ")
-        t3 = ttk.Frame(nb); nb.add(t3, text="  Erweitert  ")
+        t1 = ttk.Frame(nb); nb.add(t1, text=T("tab_general"))
+        t2 = ttk.Frame(nb); nb.add(t2, text=T("tab_audio"))
+        t3 = ttk.Frame(nb); nb.add(t3, text=T("tab_advanced"))
 
         self._tab_general(t1)
         self._tab_audio(t2)
@@ -819,49 +1292,47 @@ class SettingsWindow:
         bot = tk.Frame(main, bg=C["bg"])
         bot.pack(fill="x")
 
-        self.hw_info_lbl = tk.Label(bot, text="Prüfe Hardware...",
+        self.hw_info_lbl = tk.Label(bot, text=T("checking_hw"),
                                     bg=C["bg"], fg=C["dim"],
                                     font=("Segoe UI", 7), wraplength=240)
         self.hw_info_lbl.pack(side="left")
 
-        tk.Button(bot, text="Abbrechen",
+        tk.Button(bot, text=T("btn_cancel"),
                   bg=C["btn_clear"], fg=C["text"], relief="flat",
                   activebackground=_lighten(C["btn_clear"]), activeforeground=C["text"],
                   cursor="hand2", padx=10, pady=5, font=("Segoe UI", 9),
                   command=self._on_close).pack(side="right", padx=(4,0))
 
-        tk.Button(bot, text="✔  Speichern",
+        tk.Button(bot, text=T("btn_save"),
                   bg=C["btn_paste"], fg=C["text"], relief="flat",
                   activebackground=_lighten(C["btn_paste"]), activeforeground=C["text"],
                   cursor="hand2", padx=10, pady=5, font=("Segoe UI", 9, "bold"),
                   command=self._save).pack(side="right")
 
-    # ── Tab 1: Allgemein ───────────────────────────────────────────────────────
+    # ── Tab 1: General ─────────────────────────────────────────────────────────
 
     def _tab_general(self, frame):
         p = tk.Frame(frame, bg=C["bg"], padx=14, pady=8)
         p.pack(fill="both", expand=True)
 
-        # ── Hotkey-Recorder ───────────────────────────────────────────────────
-        _section(p, "Tastenkürzel / Maustaste (Hotkey)")
-        tk.Label(p, text="Keyboard-Tasten UND Maustasten (z.B. Daumentaste) werden erkannt.",
+        # Hotkey recorder
+        _section(p, "sec_hotkey")
+        tk.Label(p, text=T("hotkey_hint"),
                  bg=C["bg"], fg=C["dim"], font=("Segoe UI", 8),
-                 wraplength=380, justify="left").pack(anchor="w")
+                 wraplength=390, justify="left").pack(anchor="w")
 
         hk_row = tk.Frame(p, bg=C["bg"])
         hk_row.pack(fill="x", pady=(6,0))
 
         self.hotkey_var = tk.StringVar(value=cfg["hotkey"])
-        tk.Entry(
-            hk_row, textvariable=self.hotkey_var,
-            bg=C["bg3"], fg=C["ready"],
-            font=("Consolas", 11, "bold"),
-            insertbackground=C["text"], relief="flat", bd=6,
-            width=20, state="readonly",
-        ).pack(side="left")
+        tk.Entry(hk_row, textvariable=self.hotkey_var,
+                 bg=C["bg3"], fg=C["ready"],
+                 font=("Consolas", 11, "bold"),
+                 insertbackground=C["text"], relief="flat", bd=6,
+                 width=20, state="readonly").pack(side="left")
 
         self.rec_btn = tk.Button(
-            hk_row, text="🔴 Aufnehmen",
+            hk_row, text=T("btn_record"),
             bg=C["record"], fg=C["text"], relief="flat",
             activebackground=_lighten(C["record"]), activeforeground=C["text"],
             cursor="hand2", padx=8, pady=4, font=("Segoe UI", 8, "bold"),
@@ -869,90 +1340,109 @@ class SettingsWindow:
         )
         self.rec_btn.pack(side="left", padx=6)
 
-        tk.Button(
-            hk_row, text="↺", bg=C["btn_set"], fg=C["dim"], relief="flat",
-            activebackground=_lighten(C["btn_set"]), activeforeground=C["text"],
-            cursor="hand2", padx=6, pady=4, font=("Segoe UI", 10),
-            command=lambda: self.hotkey_var.set(DEFAULTS["hotkey"]),
-        ).pack(side="left")
+        tk.Button(hk_row, text="↺", bg=C["btn_set"], fg=C["dim"], relief="flat",
+                  activebackground=_lighten(C["btn_set"]), activeforeground=C["text"],
+                  cursor="hand2", padx=6, pady=4, font=("Segoe UI", 10),
+                  command=lambda: self.hotkey_var.set(DEFAULTS["hotkey"])
+                  ).pack(side="left")
 
         self.hk_hint = tk.Label(p, text="", bg=C["bg"], fg=C["process"],
                                 font=("Segoe UI", 8))
         self.hk_hint.pack(anchor="w", pady=(4,0))
 
-        # Sprache
-        _section(p, "Erkennungssprache")
+        # UI language
+        _section(p, "sec_ui_lang")
+        self.ui_lang_var = tk.StringVar()
+        ttk.Combobox(p, textvariable=self.ui_lang_var,
+                     values=list(UI_LANGUAGES.keys()), state="readonly", width=20,
+                     font=("Segoe UI", 9)).pack(anchor="w", pady=(4,2))
+        tk.Label(p, text=T("ui_lang_note"),
+                 bg=C["bg"], fg=C["dim"], font=("Segoe UI", 8),
+                 wraplength=390, justify="left").pack(anchor="w")
+
+        # Recognition language (input)
+        _section(p, "sec_rec_lang")
         self.lang_var = tk.StringVar()
+        self._recog_labels = _recog_lang_labels(cfg["ui_lang"])
         ttk.Combobox(p, textvariable=self.lang_var,
-                     values=list(LANGUAGES.keys()), state="readonly", width=28,
+                     values=list(self._recog_labels.values()), state="readonly", width=28,
                      font=("Segoe UI", 9)).pack(anchor="w", pady=(4,0))
 
-        # Einfügemodus
-        _section(p, "Text einfügen via")
+        # Output language / translation
+        _section(p, "sec_output_lang")
+        self.out_lang_var = tk.StringVar()
+        self._out_lang_options = {
+            "same": T("output_same"),
+            "en":   _recog_lang_labels(cfg["ui_lang"])["en"],
+        }
+        ttk.Combobox(p, textvariable=self.out_lang_var,
+                     values=list(self._out_lang_options.values()), state="readonly", width=28,
+                     font=("Segoe UI", 9)).pack(anchor="w", pady=(4,2))
+        tk.Label(p, text=T("output_lang_note"),
+                 bg=C["bg"], fg=C["dim"], font=("Segoe UI", 8),
+                 wraplength=390, justify="left").pack(anchor="w")
+
+        # Paste mode
+        _section(p, "sec_paste")
         self.paste_var = tk.StringVar()
-        for v, lbl in [("clipboard","Zwischenablage (Ctrl+V)  ← empfohlen"),
-                       ("type",     "Direkt tippen (kein Clipboard, aber langsamer)")]:
-            tk.Radiobutton(p, text=lbl, variable=self.paste_var, value=v,
+        for v, key in [("clipboard","paste_clipboard"), ("type","paste_type")]:
+            tk.Radiobutton(p, text=T(key), variable=self.paste_var, value=v,
                            bg=C["bg"], fg=C["text"], selectcolor=C["bg3"],
                            activebackground=C["bg"], activeforeground=C["text"],
                            font=("Segoe UI", 9)).pack(anchor="w")
 
-        # Sound + Transparenz
-        _section(p, "Erscheinungsbild")
+        # Appearance
+        _section(p, "sec_appearance")
         self.sound_var = tk.BooleanVar()
-        tk.Checkbutton(p, text="Audio-Feedback (Beep bei Start/Stop)",
-                       variable=self.sound_var,
+        tk.Checkbutton(p, text=T("sound_feedback"), variable=self.sound_var,
                        bg=C["bg"], fg=C["text"], selectcolor=C["bg3"],
                        activebackground=C["bg"], activeforeground=C["text"],
                        font=("Segoe UI", 9)).pack(anchor="w")
 
         op_row = tk.Frame(p, bg=C["bg"])
         op_row.pack(fill="x", pady=(6,0))
-        tk.Label(op_row, text="Transparenz:", bg=C["bg"], fg=C["text"],
+        tk.Label(op_row, text=T("transparency"), bg=C["bg"], fg=C["text"],
                  font=("Segoe UI", 9)).pack(side="left")
         self.opacity_var = tk.DoubleVar()
         self.opacity_lbl = tk.Label(op_row, text="", bg=C["bg"], fg=C["dim"],
                                     font=("Segoe UI", 9), width=4)
         self.opacity_lbl.pack(side="right")
         tk.Scale(op_row, variable=self.opacity_var,
-                 from_=0.4, to=1.0, resolution=0.05,
-                 orient="horizontal", length=180,
+                 from_=0.4, to=1.0, resolution=0.05, orient="horizontal", length=180,
                  bg=C["bg"], fg=C["text"], troughcolor=C["bg3"],
                  highlightthickness=0, bd=0, showvalue=False,
                  command=lambda v: self.opacity_lbl.config(text=f"{float(v):.0%}")
                  ).pack(side="left", padx=6)
 
-    # ── Tab 2: Audio / KI ─────────────────────────────────────────────────────
+    # ── Tab 2: Audio / AI ──────────────────────────────────────────────────────
 
     def _tab_audio(self, frame):
         p = tk.Frame(frame, bg=C["bg"], padx=14, pady=8)
         p.pack(fill="both", expand=True)
 
-        _section(p, "Berechnungsgerät")
+        _section(p, "sec_device")
         self.device_var = tk.StringVar()
+        # Build device labels in current UI lang
+        dev_labels = list(DEVICES.values())
         ttk.Combobox(p, textvariable=self.device_var,
-                     values=list(DEVICES.keys()), state="readonly", width=30,
+                     values=dev_labels, state="readonly", width=30,
                      font=("Segoe UI", 9)).pack(anchor="w", pady=(4,2))
         self.dev_lbl = tk.Label(p, text="", bg=C["bg"], fg=C["ready"],
-                                font=("Segoe UI", 8), wraplength=380, justify="left")
+                                font=("Segoe UI", 8), wraplength=390, justify="left")
         self.dev_lbl.pack(anchor="w", pady=(0,8))
 
-        _section(p, "Compute-Typ")
+        _section(p, "sec_compute")
         self.compute_var = tk.StringVar()
         ttk.Combobox(p, textvariable=self.compute_var,
-                     values=list(COMPUTE_TYPES.keys()), state="readonly", width=28,
+                     values=list(COMPUTE_TYPES.values()), state="readonly", width=28,
                      font=("Segoe UI", 9)).pack(anchor="w", pady=(4,2))
-        tk.Label(p, text="'Auto' wählt automatisch den optimalen Typ je nach Gerät.",
-                 bg=C["bg"], fg=C["dim"], font=("Segoe UI", 8)).pack(anchor="w")
+        tk.Label(p, text=T("compute_note"), bg=C["bg"], fg=C["dim"],
+                 font=("Segoe UI", 8)).pack(anchor="w")
 
-        _section(p, "Whisper-Modell")
-        model_desc = {
-            "tiny":     "~75 MB   | sehr schnell | einfacher Text",
-            "base":     "~150 MB  | schnell      | gut für Alltag  ★",
-            "small":    "~500 MB  | mittel       | bessere Genauigkeit",
-            "medium":   "~1.5 GB  | langsam      | hohe Genauigkeit",
-            "large-v2": "~3 GB    | sehr langsam | maximale Genauigkeit",
-            "large-v3": "~3 GB    | sehr langsam | neueste Version",
+        _section(p, "sec_model")
+        model_desc_keys = {
+            "tiny": "model_tiny", "base": "model_base", "small": "model_small",
+            "medium": "model_medium", "large-v2": "model_large_v2", "large-v3": "model_large_v3",
         }
         self.model_var = tk.StringVar()
         for m in MODELS:
@@ -962,26 +1452,25 @@ class SettingsWindow:
                            bg=C["bg"], fg=C["text"], selectcolor=C["bg3"],
                            activebackground=C["bg"], activeforeground=C["text"],
                            font=("Consolas", 9, "bold"), width=9, anchor="w").pack(side="left")
-            tk.Label(row, text=model_desc.get(m,""), bg=C["bg"], fg=C["dim"],
+            tk.Label(row, text=T(model_desc_keys.get(m,"")), bg=C["bg"], fg=C["dim"],
                      font=("Segoe UI", 8)).pack(side="left")
 
-    # ── Tab 3: Erweitert ───────────────────────────────────────────────────────
+    # ── Tab 3: Advanced ────────────────────────────────────────────────────────
 
     def _tab_advanced(self, frame):
         p = tk.Frame(frame, bg=C["bg"], padx=14, pady=8)
         p.pack(fill="both", expand=True)
 
-        _section(p, "Voice Activity Detection (VAD)")
+        _section(p, "sec_vad")
         self.vad_var = tk.BooleanVar()
-        tk.Checkbutton(p, text="VAD aktivieren (ignoriert Stille automatisch)",
-                       variable=self.vad_var, bg=C["bg"], fg=C["text"],
-                       selectcolor=C["bg3"], activebackground=C["bg"],
-                       activeforeground=C["text"],
+        tk.Checkbutton(p, text=T("vad_enable"), variable=self.vad_var,
+                       bg=C["bg"], fg=C["text"], selectcolor=C["bg3"],
+                       activebackground=C["bg"], activeforeground=C["text"],
                        font=("Segoe UI", 9)).pack(anchor="w", pady=(4,4))
 
         vad_row = tk.Frame(p, bg=C["bg"])
         vad_row.pack(anchor="w")
-        tk.Label(vad_row, text="Stille-Schwelle:", bg=C["bg"], fg=C["text"],
+        tk.Label(vad_row, text=T("vad_threshold"), bg=C["bg"], fg=C["text"],
                  font=("Segoe UI", 9)).pack(side="left")
         self.vad_ms_var = tk.IntVar()
         tk.Spinbox(vad_row, textvariable=self.vad_ms_var,
@@ -992,7 +1481,7 @@ class SettingsWindow:
         tk.Label(vad_row, text="ms", bg=C["bg"], fg=C["dim"],
                  font=("Segoe UI", 9)).pack(side="left")
 
-        _section(p, "Beam Size  (Qualität vs. Geschwindigkeit)")
+        _section(p, "sec_beam")
         beam_row = tk.Frame(p, bg=C["bg"])
         beam_row.pack(anchor="w", pady=(4,0))
         tk.Label(beam_row, text="Beam Size:", bg=C["bg"], fg=C["text"],
@@ -1003,17 +1492,17 @@ class SettingsWindow:
                    bg=C["bg3"], fg=C["text"], buttonbackground=C["accent"],
                    insertbackground=C["text"], relief="flat",
                    font=("Segoe UI", 9)).pack(side="left", padx=6)
-        tk.Label(beam_row, text="(1=schnell, 5=Standard, 10=genau)",
-                 bg=C["bg"], fg=C["dim"], font=("Segoe UI", 8)).pack(side="left")
+        tk.Label(beam_row, text=T("beam_hint"), bg=C["bg"], fg=C["dim"],
+                 font=("Segoe UI", 8)).pack(side="left")
 
         _section(p, "")
-        tk.Button(p, text="↺  Alle Einstellungen auf Standard zurücksetzen",
+        tk.Button(p, text=T("btn_reset"),
                   bg=C["btn_clear"], fg=C["dim"], relief="flat",
                   activebackground=_lighten(C["btn_clear"]), activeforeground=C["text"],
                   cursor="hand2", padx=8, pady=4, font=("Segoe UI", 8),
                   command=self._reset).pack(anchor="w", pady=(10,0))
 
-    # ── Werte laden ────────────────────────────────────────────────────────────
+    # ── Load values ────────────────────────────────────────────────────────────
 
     def _load_values(self):
         self.hotkey_var.set(cfg["hotkey"])
@@ -1025,38 +1514,55 @@ class SettingsWindow:
         self.vad_var.set(cfg["vad_filter"])
         self.vad_ms_var.set(cfg["vad_silence_ms"])
         self.beam_var.set(cfg["beam_size"])
-        self.lang_var.set(next((k for k,v in LANGUAGES.items() if v==cfg["language"]), "Automatisch"))
-        self.device_var.set(next((k for k,v in DEVICES.items() if v==cfg["device"]), "Auto-Erkennung"))
-        self.compute_var.set(next((k for k,v in COMPUTE_TYPES.items() if v==cfg["compute_type"]), "Auto"))
+
+        # UI language
+        ui_lbl = next((k for k,v in UI_LANGUAGES.items() if v==cfg.get("ui_lang","en")), "English")
+        self.ui_lang_var.set(ui_lbl)
+
+        # Recognition language (input)
+        rl = _recog_lang_labels(cfg["ui_lang"])
+        rec_code = cfg.get("language") or "auto"
+        self.lang_var.set(rl.get(rec_code, rl["auto"]))
+
+        # Output language
+        out_opts = {"same": T("output_same"), "en": rl["en"]}
+        out_code = cfg.get("output_language", "same")
+        self.out_lang_var.set(out_opts.get(out_code, out_opts["same"]))
+
+        # Device
+        self.device_var.set(DEVICES.get(cfg["device"], "Auto"))
+
+        # Compute type
+        self.compute_var.set(COMPUTE_TYPES.get(cfg["compute_type"], "Auto"))
 
     def _detect_hw(self):
         devs  = detect_devices()
-        parts = []
-        parts.append(f"{'✅' if devs['cuda'] else '❌'} CUDA: {devs['cuda_name'] or 'nicht verfügbar'}")
-        parts.append(f"{'✅' if devs['dml']  else '❌'} NPU/DirectML: {devs.get('npu_name','') or ('verfügbar' if devs['dml'] else 'nicht verfügbar')}")
+        na    = T("hw_not_available")
+        av    = T("hw_available")
+        parts = [
+            f"{'✅' if devs['cuda'] else '❌'} CUDA: {devs['cuda_name'] or na}",
+            f"{'✅' if devs['dml']  else '❌'} NPU/DirectML: {devs.get('npu_name','') or (av if devs['dml'] else na)}",
+        ]
         text = "   |   ".join(parts)
         try:
             self.dev_lbl.config(text=text)
             self.hw_info_lbl.config(text=text)
-        except Exception: pass
+        except Exception:
+            pass
 
-    # ── Hotkey-Recorder (pynput – erkennt Keyboard + Maustasten) ──────────────
+    # ── Hotkey recorder ────────────────────────────────────────────────────────
 
     def _toggle_recorder(self):
-        if self._recording_hotkey:
-            self._stop_recorder()
-        else:
-            self._start_recorder()
+        if self._recording_hotkey: self._stop_recorder()
+        else:                      self._start_recorder()
 
     def _start_recorder(self):
         self._recording_hotkey = True
-        self._held_kb.clear()
-        self._held_ms.clear()
-        self.rec_btn.config(text="⏹  Stoppen", bg=C["process"])
-        self.hotkey_var.set("▶  Tasten / Maustaste drücken ...")
-        self.hk_hint.config(text="Modifier (Ctrl/Alt) + Taste ODER Maustaste")
+        self._held_kb.clear(); self._held_ms.clear()
+        self.rec_btn.config(text=T("btn_stop_record"), bg=C["process"])
+        self.hotkey_var.set(T("recorder_prompt"))
+        self.hk_hint.config(text=T("recorder_hint"))
 
-        # Keyboard-Listener
         def on_kb_press(key):
             if not self._recording_hotkey: return
             kn = self._key_name(key)
@@ -1068,14 +1574,13 @@ class SettingsWindow:
             if not self._recording_hotkey: return
             kn = self._key_name(key)
             combo = self._build_combo()
-            # Wenn mindestens 1 nicht-modifier Taste oder Maustaste dabei
-            if any(k not in {"ctrl","alt","shift","cmd","windows"} for k in (self._held_kb | self._held_ms)):
+            if any(k not in {"ctrl","alt","shift","cmd","windows"}
+                   for k in (self._held_kb | self._held_ms)):
                 try: self.hotkey_var.set(combo)
                 except Exception: pass
                 self.win.after(0, self._stop_recorder)
             self._held_kb.discard(kn)
 
-        # Mouse-Listener
         def on_ms_click(x, y, button, pressed):
             if not self._recording_hotkey: return
             btn_name = MOUSE_BTN_NAMES.get(button, f"mouse_{button}")
@@ -1091,11 +1596,8 @@ class SettingsWindow:
                 self.win.after(0, self._stop_recorder)
 
         self._rec_kb_listener = pynput_kb.Listener(
-            on_press=on_kb_press, on_release=on_kb_release, daemon=True
-        )
-        self._rec_ms_listener = pynput_ms.Listener(
-            on_click=on_ms_click, daemon=True
-        )
+            on_press=on_kb_press, on_release=on_kb_release, daemon=True)
+        self._rec_ms_listener = pynput_ms.Listener(on_click=on_ms_click, daemon=True)
         self._rec_kb_listener.start()
         self._rec_ms_listener.start()
 
@@ -1105,22 +1607,19 @@ class SettingsWindow:
             if lst:
                 try: lst.stop()
                 except Exception: pass
-        self._rec_kb_listener = None
-        self._rec_ms_listener = None
+        self._rec_kb_listener = None; self._rec_ms_listener = None
         try:
-            self.rec_btn.config(text="🔴 Aufnehmen", bg=C["record"])
+            self.rec_btn.config(text=T("btn_record"), bg=C["record"])
             self.hk_hint.config(text="")
         except Exception: pass
 
     @staticmethod
     def _key_name(key) -> str:
-        try:
-            return key.char.lower()
+        try: return key.char.lower()
         except AttributeError:
             name = str(key).replace("Key.", "").lower()
             for old, new in [("ctrl_l","ctrl"),("ctrl_r","ctrl"),
-                             ("alt_l","alt"),("alt_r","alt"),
-                             ("alt_gr","alt"),
+                             ("alt_l","alt"),("alt_r","alt"),("alt_gr","alt"),
                              ("shift_l","shift"),("shift_r","shift"),
                              ("cmd_l","cmd"),("cmd_r","cmd")]:
                 name = name.replace(old, new)
@@ -1133,21 +1632,31 @@ class SettingsWindow:
         ms_keys  = sorted(self._held_ms)
         return "+".join(kb_mods + kb_other + ms_keys)
 
-    # ── Speichern ──────────────────────────────────────────────────────────────
+    # ── Save ───────────────────────────────────────────────────────────────────
 
     def _save(self):
         self._stop_recorder()
         hk = self.hotkey_var.get()
-        if "▶" in hk or not hk:
-            hk = DEFAULTS["hotkey"]
+        if "▶" in hk or not hk: hk = DEFAULTS["hotkey"]
         cfg["hotkey"]         = hk
-        cfg["language"]       = LANGUAGES.get(self.lang_var.get())
+        cfg["ui_lang"]        = UI_LANGUAGES.get(self.ui_lang_var.get(), "en")
+
+        # Resolve recognition language (label → code)
+        rl      = _recog_lang_labels(cfg["ui_lang"])
+        sel_lbl = self.lang_var.get()
+        cfg["language"] = next((code for code, lbl in rl.items() if lbl == sel_lbl), None)
+
+        # Resolve output language (label → code)
+        out_opts = {"same": T("output_same"), "en": rl["en"]}
+        sel_out  = self.out_lang_var.get()
+        cfg["output_language"] = next((code for code, lbl in out_opts.items() if lbl == sel_out), "same")
+
         cfg["paste_mode"]     = self.paste_var.get()
         cfg["sound_feedback"] = self.sound_var.get()
         cfg["opacity"]        = round(self.opacity_var.get(), 2)
         cfg["model"]          = self.model_var.get()
-        cfg["device"]         = DEVICES.get(self.device_var.get(), "auto")
-        cfg["compute_type"]   = COMPUTE_TYPES.get(self.compute_var.get(), "auto")
+        cfg["device"]         = next((k for k,v in DEVICES.items() if v==self.device_var.get()), "auto")
+        cfg["compute_type"]   = next((k for k,v in COMPUTE_TYPES.items() if v==self.compute_var.get()), "auto")
         cfg["vad_filter"]     = self.vad_var.get()
         cfg["vad_silence_ms"] = self.vad_ms_var.get()
         cfg["beam_size"]      = self.beam_var.get()
@@ -1156,8 +1665,7 @@ class SettingsWindow:
         self.win.destroy()
 
     def _reset(self):
-        if messagebox.askyesno("Zurücksetzen",
-                               "Alle Einstellungen zurücksetzen?",
+        if messagebox.askyesno(T("reset_confirm_title"), T("reset_confirm_msg"),
                                parent=self.win):
             cfg.update(DEFAULTS)
             self._load_values()
@@ -1167,16 +1675,16 @@ class SettingsWindow:
 def main():
     load_settings()
 
-    stream = sd.InputStream(
-        samplerate=16000, channels=1, dtype="float32",
-        callback=audio_callback, blocksize=512,
-    )
-
     root = tk.Tk()
     app  = WhisperPTTApp(root)
 
-    with stream:
-        root.mainloop()
+    threading.Thread(target=start_audio_stream, daemon=True).start()
+
+    root.mainloop()
+
+    if _audio_stream is not None:
+        try: _audio_stream.stop(); _audio_stream.close()
+        except Exception: pass
 
 if __name__ == "__main__":
     main()
