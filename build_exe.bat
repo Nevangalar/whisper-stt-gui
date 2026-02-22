@@ -20,7 +20,9 @@ pip install torch --index-url https://download.pytorch.org/whl/cu121 --quiet
 echo.
 echo [3/5] Abhaengigkeiten...
 REM pynput ersetzt keyboard-Lib (unterstuetzt Keyboard + Maustasten)
+REM winrt fuer Windows Mikrofon-Berechtigungsanfrage
 pip install faster-whisper sounddevice soundfile numpy pynput pyperclip pyautogui pyinstaller --quiet
+pip install winrt-Windows.Media.Capture --quiet 2>nul || echo        (winrt optional - kein Fehler)
 
 echo.
 echo [4/5] CUDA-Check...

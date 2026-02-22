@@ -19,6 +19,9 @@ a = Analysis(
         'pyperclip', 'pyautogui', 'pygetwindow',
         'tkinter', 'tkinter.ttk', 'tkinter.messagebox', 'tkinter.font',
         'queue', 'threading', 'tempfile', 'json', 'pathlib',
+        # Windows Mic-Berechtigung
+        'winreg', 'ctypes', 'subprocess',
+        'winrt', 'winrt.windows.media.capture',
     ] + hi_fw + hi_ct2,
     hookspath=[],
     runtime_hooks=[],

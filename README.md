@@ -2,8 +2,7 @@
 
 **Push-to-talk speech recognition with a local Whisper model – always-on-top overlay for Windows**
 
-Hold a hotkey (or a mouse button), speak, release – the recognized text is automatically pasted into whatever window is currently active. 
-Runs entirely **locally** on your GPU, NPU, or CPU with no cloud API, no internet connection required, and no data leaving your machine.
+Hold a hotkey (or a mouse button), speak, release – the recognized text is automatically pasted into whatever window is currently active. Runs entirely **locally** on your GPU, NPU, or CPU with no cloud API, no internet connection required, and no data leaving your machine.
 
 ![Platform](https://img.shields.io/badge/Platform-Windows-blue)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
@@ -50,7 +49,8 @@ Runs entirely **locally** on your GPU, NPU, or CPU with no cloud API, no interne
   - Keyboard combos: `Ctrl+Alt+Space`, `F9`, `Shift+F12`, etc.
   - Mouse buttons: thumb back/forward (`mouse_x1` / `mouse_x2`), middle click, etc.
   - Modifier + mouse button: `Ctrl+mouse_x1`, etc.
-- **Recognition language**: German, English, French, Spanish, Italian, Dutch, Polish, Russian, Chinese, Japanese, Turkish, Auto-detect
+- **Recognition language (input)**: German, English, French, Spanish, Italian, Dutch, Polish, Russian, Chinese, Japanese, Turkish, Auto-detect
+- **Output language / translation**: speak in any language and receive English text — powered by Whisper's built-in translation, fully local, no API required
 - **Paste mode**: Clipboard (Ctrl+V) or direct typing
 - **Device selection** with live hardware detection:
   - NVIDIA CUDA
@@ -79,7 +79,7 @@ Runs entirely **locally** on your GPU, NPU, or CPU with no cloud API, no interne
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/Nevangalar/whisper-stt-gui.git
+git clone https://github.com/YOUR-USERNAME/whisper-ptt.git
 cd whisper-ptt
 ```
 
@@ -160,6 +160,7 @@ All settings are configured via the ⚙ menu in the overlay and saved automatica
 {
   "hotkey": "ctrl+alt+space",
   "language": "de",
+  "output_language": "same",
   "model": "base",
   "device": "auto",
   "compute_type": "auto",
@@ -177,7 +178,8 @@ All settings are configured via the ⚙ menu in the overlay and saved automatica
 | Parameter | Values | Description |
 |---|---|---|
 | `hotkey` | e.g. `ctrl+alt+space`, `mouse_x1` | Recording hotkey |
-| `language` | `de`, `en`, `fr`, ... , `null` | Recognition language (`null` = auto-detect) |
+| `language` | `de`, `en`, `fr`, ... , `null` | Recognition / input language (`null` = auto-detect) |
+| `output_language` | `same`, `en` | Output language: `same` = no translation, `en` = translate to English |
 | `model` | `tiny` `base` `small` `medium` `large-v2` `large-v3` | Whisper model |
 | `device` | `auto` `cuda` `dml` `cpu` | Compute device |
 | `compute_type` | `auto` `float16` `int8` `float32` | Compute type |
