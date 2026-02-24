@@ -13,6 +13,13 @@ Whisper PTT – GUI Edition v5
 VERSION = "0.6.0"
 
 import os, sys, time, json, tempfile, threading, queue, subprocess, ctypes
+
+# PyInstaller windowed builds set sys.stdout/stderr to None; redirect to devnull
+# so that third-party libraries (openvino_genai, tqdm, …) don't crash on .write()
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w")
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
@@ -496,7 +503,15 @@ def _recog_lang_labels(ui: str) -> dict:
     return labels.get(ui, labels["en"])
 
 MODELS = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
-DEVICES = {"auto": "Auto", "cuda": "NVIDIA CUDA", "dml": "NPU / DirectML", "cpu": "CPU"}
+MODELS_OV = {
+    "tiny":     "OpenVINO/whisper-tiny-fp16-ov",
+    "base":     "OpenVINO/whisper-base-fp16-ov",
+    "small":    "OpenVINO/whisper-small-fp16-ov",
+    "medium":   "OpenVINO/whisper-medium-fp16-ov",
+    "large-v2": "OpenVINO/whisper-large-v2-fp16-ov",
+    "large-v3": "OpenVINO/whisper-large-v3-int8-ov",
+}
+DEVICES = {"auto": "Auto", "cuda": "NVIDIA CUDA", "npu": "NPU (OpenVINO)", "cpu": "CPU"}
 COMPUTE_TYPES = {"auto": "Auto", "float16": "float16 (GPU)", "int8": "int8", "float32": "float32 (CPU)"}
 
 MOUSE_BTN_NAMES = {
@@ -512,7 +527,8 @@ MOUSE_BTN_NAMES = {
 recording       = False
 audio_chunks    = []
 record_lock     = threading.Lock()
-whisper_model   = None
+whisper_model   = None   # faster_whisper.WhisperModel  (CPU / CUDA)
+openvino_pipe   = None   # openvino_genai.WhisperPipeline (NPU)
 current_volume  = 0.0
 ui_queue        = queue.Queue()
 cfg             = dict(DEFAULTS)
@@ -556,47 +572,108 @@ def save_settings():
 # ─── Hardware detection ────────────────────────────────────────────────────────
 
 def detect_devices() -> dict:
-    r = {"cuda": False, "dml": False, "cuda_name": "", "npu_name": ""}
+    r = {"cuda": False, "npu": False, "cuda_name": "", "npu_name": ""}
     try:
         import torch
         if torch.cuda.is_available():
             r["cuda"] = True; r["cuda_name"] = torch.cuda.get_device_name(0)
     except ImportError:
         pass
+    # Primary NPU detection via OpenVINO (official method)
     try:
         import openvino as ov
-        devs = ov.Core().available_devices
-        if any("NPU" in d for d in devs):
-            r["dml"] = True; r["npu_name"] = next(d for d in devs if "NPU" in d)
+        core  = ov.Core()
+        avail = core.available_devices
+        npu_devs = [d for d in avail if "NPU" in d]
+        if npu_devs:
+            r["npu"] = True
+            try:
+                r["npu_name"] = core.get_property(npu_devs[0], "FULL_DEVICE_NAME")
+            except Exception:
+                r["npu_name"] = npu_devs[0]
     except Exception:
         pass
-    try:
-        import onnxruntime as ort
-        if "DmlExecutionProvider" in ort.get_available_providers():
-            r["dml"] = True; r["npu_name"] = r["npu_name"] or "DirectML"
-    except Exception:
-        pass
+    # Fallback: Windows PnP device list (works without openvino installed)
+    if not r["npu"]:
+        try:
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "Get-PnpDevice | Where-Object {$_.FriendlyName} | "
+                 "ForEach-Object {$_.FriendlyName}"],
+                capture_output=True, text=True, timeout=8,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            ).stdout
+            for line in out.splitlines():
+                ln = line.strip()
+                if ln and any(kw in ln.upper() for kw in
+                              ("NPU", "NEURAL", "AI BOOST", "VPU")):
+                    r["npu"] = True
+                    r["npu_name"] = ln
+                    break
+        except Exception:
+            pass
     return r
 
 def resolve_device(dev_cfg, compute_cfg):
     av = detect_devices()
     if dev_cfg == "auto":
-        if av["cuda"]: d, c = "cuda", "float16"
-        elif av["dml"]: d, c = "dml", "int8"
-        else: d, c = "cpu", "int8"
-    elif dev_cfg == "cuda": d, c = "cuda", "float16"
-    elif dev_cfg == "dml":  d, c = "dml",  "int8"
-    else:                   d, c = "cpu",  "int8"
+        if av["cuda"]:  d, c = "cuda", "float16"
+        elif av["npu"]: d, c = "npu",  "int8"
+        else:           d, c = "cpu",  "int8"
+    elif dev_cfg == "cuda":        d, c = "cuda", "float16"
+    elif dev_cfg in ("npu", "dml"): d, c = "npu",  "int8"   # dml = legacy alias
+    else:                           d, c = "cpu",  "int8"
     if compute_cfg != "auto": c = compute_cfg
     return d, c
+
+# ─── OpenVINO model helpers ────────────────────────────────────────────────────
+
+def _ov_model_dir(model_name: str) -> Path:
+    return Path(MODEL_CACHE_DIR) / f"{model_name}-ov"
+
+def _download_ov_model(model_name: str, status_cb=None) -> Path:
+    """Download pre-converted OpenVINO Whisper model from HuggingFace if needed."""
+    repo_id   = MODELS_OV.get(model_name, f"OpenVINO/whisper-{model_name}-fp16-ov")
+    local_dir = _ov_model_dir(model_name)
+    if not local_dir.exists() or not any(local_dir.glob("*.xml")):
+        if status_cb: status_cb("loading", f"Downloading '{model_name}' (OV)...")
+        _log(f"⬇️  Downloading OV model: {repo_id}")
+        from huggingface_hub import snapshot_download
+        snapshot_download(
+            repo_id=repo_id,
+            local_dir=str(local_dir),
+            ignore_patterns=["*.msgpack", "*.h5", "flax_model*", "tf_model*"],
+        )
+        _log(f"✅ OV model saved to {local_dir}")
+    return local_dir
 
 # ─── Model loading ─────────────────────────────────────────────────────────────
 
 def load_model(status_cb=None):
-    global whisper_model
+    global whisper_model, openvino_pipe
+    whisper_model = None
+    openvino_pipe = None
     if status_cb: status_cb("loading", f"Loading '{cfg['model']}'...")
     d, c = resolve_device(cfg["device"], cfg["compute_type"])
-    lbl  = {"cuda": "CUDA (NVIDIA)", "dml": "NPU/DirectML", "cpu": "CPU"}.get(d, d)
+
+    # ── NPU path via OpenVINO GenAI ───────────────────────────────────────────
+    if d == "npu":
+        try:
+            import openvino_genai
+            model_dir = _download_ov_model(cfg["model"], status_cb)
+            _log("ℹ️  Compiling for NPU – first run may take ~1 min...")
+            if status_cb: status_cb("loading", "Compiling for NPU...")
+            openvino_pipe = openvino_genai.WhisperPipeline(str(model_dir), device="NPU")
+            if status_cb: status_cb("ready", f"{T('ready')}  [NPU]")
+            _log("✅ Model loaded on NPU (OpenVINO)")
+            return
+        except Exception as e:
+            _log(f"⚠️  NPU failed: {e}")
+            _log("↩️  Falling back to CPU...")
+            d, c = "cpu", "int8"
+
+    # ── CPU / CUDA path via faster-whisper ────────────────────────────────────
+    lbl = {"cuda": "CUDA (NVIDIA)", "cpu": "CPU"}.get(d, d)
     _log(f"ℹ️  Device: {lbl} | Compute: {c} | Model: {cfg['model']}")
     try:
         from faster_whisper import WhisperModel
@@ -826,29 +903,43 @@ def transcribe_and_paste():
         ui_queue.put(("status", "ready", T("ready")))
         _log(T("log_too_short")); return
 
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        tmp_path = tmp.name
-        sf.write(tmp_path, audio_data, 16000)
+    t0       = time.time()
+    in_lang  = cfg["language"] or None
+    out_lang = cfg.get("output_language", "same")
+    task     = "translate" if (out_lang == "en" and in_lang != "en") else "transcribe"
+    if task == "translate":
+        _log("🌐 Translation mode: → English")
 
     try:
-        t0 = time.time()
-        in_lang  = cfg["language"] or None   # None = auto-detect
-        out_lang = cfg.get("output_language", "same")
-        # task="translate" makes Whisper translate output to English
-        task = "translate" if (out_lang == "en" and in_lang != "en") else "transcribe"
-        if task == "translate":
-            _log("🌐 Translation mode: → English")
-        seg, _ = whisper_model.transcribe(
-            tmp_path,
-            language=in_lang,
-            task=task,
-            beam_size=cfg["beam_size"],
-            vad_filter=cfg["vad_filter"],
-            vad_parameters=dict(min_silence_duration_ms=cfg["vad_silence_ms"]),
-        )
-        text    = " ".join(s.text.strip() for s in seg).strip()
-        elapsed = time.time() - t0
+        if openvino_pipe is not None:
+            # ── OpenVINO GenAI (NPU) ──────────────────────────────────────────
+            import openvino_genai
+            config = openvino_genai.WhisperDecodingConfig()
+            if in_lang:
+                config.language = f"<|{in_lang}|>"
+            if task == "translate":
+                config.task = "translate"
+            result = openvino_pipe.generate(audio_data, config)
+            text   = " ".join(t.strip() for t in result.texts).strip()
+        else:
+            # ── faster-whisper (CPU / CUDA) ───────────────────────────────────
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                tmp_path = tmp.name
+            sf.write(tmp_path, audio_data, 16000)
+            try:
+                seg, _ = whisper_model.transcribe(
+                    tmp_path,
+                    language=in_lang, task=task,
+                    beam_size=cfg["beam_size"],
+                    vad_filter=cfg["vad_filter"],
+                    vad_parameters=dict(min_silence_duration_ms=cfg["vad_silence_ms"]),
+                )
+                text = " ".join(s.text.strip() for s in seg).strip()
+            finally:
+                try: os.unlink(tmp_path)
+                except Exception: pass
 
+        elapsed = time.time() - t0
         if not text:
             _log(T("log_no_text"))
             ui_queue.put(("status", "ready", T("ready"))); return
@@ -859,9 +950,6 @@ def transcribe_and_paste():
     except Exception as e:
         _log(f"❌ Error: {e}")
         ui_queue.put(("status", "ready", T("ready")))
-    finally:
-        try: os.unlink(tmp_path)
-        except Exception: pass
 
 def _do_paste(text: str):
     time.sleep(0.15)
@@ -921,6 +1009,33 @@ def _make_text_widget(parent, height=5):
     txt.bind("<B1-Motion>",       lambda e: None)
     txt.bind("<ButtonRelease-1>", lambda e: None)
     return txt
+
+def _scrollable_tab(frame):
+    """Return an inner Frame inside a scrollable Canvas for a ttk.Notebook tab."""
+    canvas = tk.Canvas(frame, bg=C["bg"], highlightthickness=0, bd=0)
+    vsb    = tk.Scrollbar(frame, orient="vertical", command=canvas.yview,
+                          bg=C["bg"], troughcolor=C["bg2"], relief="flat", bd=0, width=10)
+    canvas.configure(yscrollcommand=vsb.set)
+    vsb.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+
+    inner  = tk.Frame(canvas, bg=C["bg"], padx=14, pady=8)
+    win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+    def _on_canvas_resize(e):
+        canvas.itemconfig(win_id, width=e.width)
+    canvas.bind("<Configure>", _on_canvas_resize)
+
+    def _on_inner_resize(e):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+    inner.bind("<Configure>", _on_inner_resize)
+
+    def _wheel(e):
+        canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+    canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _wheel))
+    canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+    return inner
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Main Overlay
@@ -1242,12 +1357,13 @@ class SettingsWindow:
         self.win.title(T("settings_win_title"))
         self.win.configure(bg=C["bg"])
         self.win.attributes("-topmost", True)
-        self.win.resizable(False, False)
+        self.win.resizable(False, True)
+        self.win.minsize(460, 480)
         self.win.grab_set()
         self.win.protocol("WM_DELETE_WINDOW", self._on_close)
 
         px, py = parent.winfo_x(), parent.winfo_y()
-        self.win.geometry(f"460x700+{max(0, px-470)}+{py}")
+        self.win.geometry(f"460x720+{max(0, px-470)}+{py}")
 
         self._build()
         self._load_values()
@@ -1312,8 +1428,7 @@ class SettingsWindow:
     # ── Tab 1: General ─────────────────────────────────────────────────────────
 
     def _tab_general(self, frame):
-        p = tk.Frame(frame, bg=C["bg"], padx=14, pady=8)
-        p.pack(fill="both", expand=True)
+        p = _scrollable_tab(frame)
 
         # Hotkey recorder
         _section(p, "sec_hotkey")
@@ -1417,8 +1532,7 @@ class SettingsWindow:
     # ── Tab 2: Audio / AI ──────────────────────────────────────────────────────
 
     def _tab_audio(self, frame):
-        p = tk.Frame(frame, bg=C["bg"], padx=14, pady=8)
-        p.pack(fill="both", expand=True)
+        p = _scrollable_tab(frame)
 
         _section(p, "sec_device")
         self.device_var = tk.StringVar()
@@ -1458,8 +1572,7 @@ class SettingsWindow:
     # ── Tab 3: Advanced ────────────────────────────────────────────────────────
 
     def _tab_advanced(self, frame):
-        p = tk.Frame(frame, bg=C["bg"], padx=14, pady=8)
-        p.pack(fill="both", expand=True)
+        p = _scrollable_tab(frame)
 
         _section(p, "sec_vad")
         self.vad_var = tk.BooleanVar()
@@ -1529,8 +1642,9 @@ class SettingsWindow:
         out_code = cfg.get("output_language", "same")
         self.out_lang_var.set(out_opts.get(out_code, out_opts["same"]))
 
-        # Device
-        self.device_var.set(DEVICES.get(cfg["device"], "Auto"))
+        # Device – map legacy "dml" to "npu"
+        dev_cfg = "npu" if cfg.get("device") == "dml" else cfg.get("device", "auto")
+        self.device_var.set(DEVICES.get(dev_cfg, "Auto"))
 
         # Compute type
         self.compute_var.set(COMPUTE_TYPES.get(cfg["compute_type"], "Auto"))
@@ -1541,7 +1655,7 @@ class SettingsWindow:
         av    = T("hw_available")
         parts = [
             f"{'✅' if devs['cuda'] else '❌'} CUDA: {devs['cuda_name'] or na}",
-            f"{'✅' if devs['dml']  else '❌'} NPU/DirectML: {devs.get('npu_name','') or (av if devs['dml'] else na)}",
+            f"{'✅' if devs['npu']  else '❌'} NPU:  {devs.get('npu_name','') or (av if devs['npu'] else na)}",
         ]
         text = "   |   ".join(parts)
         try:
