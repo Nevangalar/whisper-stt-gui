@@ -6,6 +6,39 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.7.0] – 2026-02-24
+
+### Changed
+- **Refactored into `ptt/` package** – the monolithic `whisper_ptt_gui.py` (~1860 lines)
+  has been split into 11 focused modules:
+  - `ptt/constants.py` – all compile-time constants (`VERSION`, `DEFAULTS`, `C`, `TRANSLATIONS`,
+    `MODELS`, `DEVICES`, `COMPUTE_TYPES`, `MOUSE_BTN_NAMES`, `SILENT_THRESHOLD`, …)
+  - `ptt/state.py` – global runtime variables (`cfg`, `recording`, `audio_chunks`,
+    `whisper_model`, `openvino_pipe`, `ui_queue`, …) + `log()` helper
+  - `ptt/config.py` – `T()` translation helper, `load_settings()`, `save_settings()`,
+    `get_models_dir()`
+  - `ptt/hardware.py` – `detect_devices()`, `resolve_device()`
+  - `ptt/model_manager.py` – `load_model()`, `_ov_model_dir()`, `_download_ov_model()`
+  - `ptt/audio.py` – `audio_callback`, `start_recording()`, `stop_recording()`,
+    `_beep()`, `request_windows_mic_permission()`, `start_audio_stream()`,
+    `restart_audio_stream()`
+  - `ptt/hotkey.py` – `parse_hotkey()`, `start_ptt_listener()`, `stop_ptt_listener()`,
+    `_ptt_trigger_press()`, `_ptt_trigger_release()`
+  - `ptt/transcribe.py` – `transcribe_and_paste()`, `_do_paste()`
+  - `ptt/ui/helpers.py` – `_lighten()`, `_section()`, `_flat_btn()`,
+    `_make_text_widget()`, `_scrollable_tab()`
+  - `ptt/ui/settings.py` – `class SettingsWindow`
+  - `ptt/ui/app.py` – `class WhisperPTTApp`
+- `whisper_ptt_gui.py` is now a ~35-line thin entry point (devnull redirect + `main()`)
+- `VERSION` bumped to `"0.7.0"`
+
+### Notes
+- No functional changes – identical behaviour to 0.6.0
+- All modules import shared state via `import ptt.state as state` (no global mutations
+  across module boundaries)
+
+---
+
 ## [0.6.0] – 2026-02-22
 
 ### Added
@@ -186,6 +219,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 | Version | Date       | Highlights |
 |---------|------------|------------|
+| 0.7.0   | 2026-02-24 | Refactored into `ptt/` package (11 modules), thin entry point |
 | 0.6.0   | 2026-02-22 | Output language / translation (speak DE → paste EN) |
 | 0.5.0   | 2026-02-22 | Multilingual UI (EN/DE/FR/ES), T() translation system |
 | 0.4.0   | 2026-02-22 | Mic watchdog, Windows permission request, auto-restart |
