@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(py:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebSearch",
+      "WebFetch(domain:docs.openvino.ai)",
+      "Bash(cd:*)",
+      "Bash(cd /c/Projekte/whisper-stt-gui && cmd /c build_exe.bat 2>&1)",
+      "Bash(cd /c/Projekte/whisper-stt-gui && venv/Scripts/pyinstaller.exe whisper_ptt_gui.spec --noconfirm --clean 2>&1)",
+      "Bash(cd C:/Projekte/whisper-stt-gui && C:/Projekte/whisper-stt-gui/venv/Scripts/python.exe -c \"\nimport sys\nsys.path.insert\\(0, '.'\\)\n# Test imports in dependency order\nprint\\('Testing constants...', end=' ', flush=True\\)\nfrom ptt.constants import VERSION, DEFAULTS, C, TRANSLATIONS, MODELS, DEVICES, MOUSE_BTN_NAMES, SILENT_THRESHOLD, _recog_lang_labels\nprint\\(f'OK \\(VERSION={VERSION}\\)'\\)\n\nprint\\('Testing state...', end=' ', flush=True\\)\nimport ptt.state as state\nprint\\('OK'\\)\n\nprint\\('Testing config...', end=' ', flush=True\\)\nfrom ptt.config import T, load_settings, save_settings, get_models_dir\nload_settings\\(\\)\nprint\\(f'OK \\(cfg keys: {list\\(state.cfg.keys\\(\\)\\)[:3]}...\\)'\\)\n\nprint\\('Testing hardware...', end=' ', flush=True\\)\nfrom ptt.hardware import detect_devices, resolve_device\nprint\\('OK'\\)\n\nprint\\('Testing model_manager...', end=' ', flush=True\\)\nfrom ptt.model_manager import load_model, _ov_model_dir, _download_ov_model\nprint\\('OK'\\)\n\nprint\\('Testing audio...', end=' ', flush=True\\)\nfrom ptt.audio import start_recording, stop_recording, audio_callback, start_audio_stream, restart_audio_stream\nprint\\('OK'\\)\n\nprint\\('Testing hotkey...', end=' ', flush=True\\)\nfrom ptt.hotkey import parse_hotkey, start_ptt_listener, stop_ptt_listener\nhk = parse_hotkey\\('ctrl+alt+space'\\)\nprint\\(f'OK \\(parse: {hk}\\)'\\)\n\nprint\\('Testing transcribe...', end=' ', flush=True\\)\nfrom ptt.transcribe import transcribe_and_paste, _do_paste\nprint\\('OK'\\)\n\nprint\\('Testing ui.helpers...', end=' ', flush=True\\)\nfrom ptt.ui.helpers import _lighten, _section, _flat_btn, _make_text_widget, _scrollable_tab\nprint\\('OK'\\)\n\nprint\\('Testing ui.settings...', end=' ', flush=True\\)\nfrom ptt.ui.settings import SettingsWindow\nprint\\('OK'\\)\n\nprint\\('Testing ui.app...', end=' ', flush=True\\)\nfrom ptt.ui.app import WhisperPTTApp\nprint\\('OK'\\)\n\nprint\\(\\)\nprint\\('All imports successful!'\\)\n\" 2>&1)"
+    ]
+  }
+}

@@ -1,0 +1,301 @@
+# Changelog – Whisper PTT
+
+All notable changes to this project are documented here.
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+Versioning follows [Semantic Versioning](https://semver.org/).
+
+---
+
+## [Planned: 0.9.0] – TBD
+
+### Planned Features
+- **Voice Activity Detection (VAD) mode** – automatic recording instead of push-to-talk
+  - New setting: "Recognition mode" with options: "Push-to-talk (PTT)" / "Voice Activity (VAD)"
+  - When VAD enabled: Microphone level threshold slider in Settings (0-100%)
+  - Auto-start recording when level exceeds threshold
+  - Auto-stop when silence detected (reuse existing VAD logic)
+  - Use case: Like Discord/TeamSpeak voice activation
+  
+### Improvements
+- Better UI responsiveness during model loading
+- Progress indicator for long operations
+- Show current loaded model in main window
+
+---
+
+## [0.8.1] – 2026-03-18 (In Progress)
+
+### Fixed
+- **Separate progress dialog removed** – was not working on NPU
+  - Model loading status now shows in main window (status LED + text)
+  - Matches startup model loading behavior
+  - UI stays responsive and movable during model load
+- **First-time setup dialog location** – now defaults to executable directory instead of user home
+  - Better for portable installations
+  - `setup.py` uses `os.path.dirname(sys.executable)` to find exe location
+
+### Known Issues (In Progress)
+- Loading status text not always visible during model load (investigation ongoing)
+
+---
+
+## [0.8.0] – 2026-03-18
+
+### Added
+- **Microphone device selection** – choose which microphone to use in Settings → Audio/AI tab
+  - Automatically detects all input devices
+  - Default device option (`-1`) always available
+  - Device name and index displayed (e.g., "Headset Microphone (#2)")
+- **`mic_device` setting** in `settings.json` and `DEFAULTS` (default: `-1` = system default)
+- **`get_mic_devices()` function** in `ptt/hardware.py` for device enumeration
+- **First-time setup dialog** – appears when no `settings.json` exists
+  - Choose default models directory, browse existing, or create new
+  - Improves user experience for fresh installs
+- **Non-blocking progress dialog** (`ptt/ui/progress.py`) – shows model loading/downloading
+  - Settings window closes immediately
+  - Main window stays responsive during background load
+  - No more "app not responding" freezes
+- **Lazy model loading** – models load in background on startup without blocking UI
+
+### Changed
+- **Flexible Python version requirement** – `build_exe.bat` now uses `py -3` instead of `py -3.13`
+  - Builds with any Python 3.x version installed (more portable)
+- **CUDA check error handling** – gracefully handles missing PyTorch
+  - Shows "Keine GPU (NPU oder CPU wird verwendet)" instead of crashing
+- **Model loading on settings change** – now uses progress dialog instead of freezing UI
+- **`audio.start_audio_stream()`** – respects `mic_device` setting from config
+- **`VERSION` bumped to `"0.8.0"`**
+
+### Fixed
+- GUI no longer freezes when loading large models (especially on settings change)
+- Windows "App is not responding" prompt eliminated for model operations
+- Build process works across multiple Python 3.x versions
+
+### Notes
+- Microphone device detection uses `sounddevice.query_devices()`
+- First-time setup is optional – can be skipped by placing `settings.json` manually
+- Progress dialog updates are queued via `state.ui_queue` for thread safety
+
+---
+
+## [0.7.0] – 2026-02-24
+
+### Changed
+- **Refactored into `ptt/` package** – the monolithic `whisper_ptt_gui.py` (~1860 lines)
+  has been split into 11 focused modules:
+  - `ptt/constants.py` – all compile-time constants (`VERSION`, `DEFAULTS`, `C`, `TRANSLATIONS`,
+    `MODELS`, `DEVICES`, `COMPUTE_TYPES`, `MOUSE_BTN_NAMES`, `SILENT_THRESHOLD`, …)
+  - `ptt/state.py` – global runtime variables (`cfg`, `recording`, `audio_chunks`,
+    `whisper_model`, `openvino_pipe`, `ui_queue`, …) + `log()` helper
+  - `ptt/config.py` – `T()` translation helper, `load_settings()`, `save_settings()`,
+    `get_models_dir()`
+  - `ptt/hardware.py` – `detect_devices()`, `resolve_device()`
+  - `ptt/model_manager.py` – `load_model()`, `_ov_model_dir()`, `_download_ov_model()`
+  - `ptt/audio.py` – `audio_callback`, `start_recording()`, `stop_recording()`,
+    `_beep()`, `request_windows_mic_permission()`, `start_audio_stream()`,
+    `restart_audio_stream()`
+  - `ptt/hotkey.py` – `parse_hotkey()`, `start_ptt_listener()`, `stop_ptt_listener()`,
+    `_ptt_trigger_press()`, `_ptt_trigger_release()`
+  - `ptt/transcribe.py` – `transcribe_and_paste()`, `_do_paste()`
+  - `ptt/ui/helpers.py` – `_lighten()`, `_section()`, `_flat_btn()`,
+    `_make_text_widget()`, `_scrollable_tab()`
+  - `ptt/ui/settings.py` – `class SettingsWindow`
+  - `ptt/ui/app.py` – `class WhisperPTTApp`
+- `whisper_ptt_gui.py` is now a ~35-line thin entry point (devnull redirect + `main()`)
+- `VERSION` bumped to `"0.7.0"`
+
+### Notes
+- No functional changes – identical behaviour to 0.6.0
+- All modules import shared state via `import ptt.state as state` (no global mutations
+  across module boundaries)
+
+---
+
+## [0.6.0] – 2026-02-22
+
+### Added
+- **Output language / translation** – separate dropdown for input and output language
+  in Settings → General
+  - `"Same as input (no translation)"` – transcribes in the spoken language (previous behaviour)
+  - `"English"` – activates Whisper's built-in translation: speak any language,
+    receive English text → no cloud API, fully local
+- **`output_language` setting** in `settings.json` and `DEFAULTS`
+  (`"same"` = no translation, `"en"` = translate to English)
+- `task="translate"` passed to `whisper_model.transcribe()` when output language is
+  English and input language is not English
+- Log message `🌐 Translation mode: → English` shown when translation is active
+- Translation strings for `sec_output_lang`, `output_same`, `output_lang_note`
+  added to `TRANSLATIONS` (all 4 UI languages: en/de/fr/es)
+
+### Changed
+- Recognition language section label renamed to **"Recognition Language (Input)"**
+  to distinguish it clearly from the new output language setting
+- Settings window height increased from 640 px to 700 px to accommodate new section
+- `VERSION` bumped to `"0.6.0"`
+
+### Notes
+- Whisper's built-in `task="translate"` only supports **English as the output language**.
+  This limitation is noted in the UI. Translation to other languages would require
+  an additional post-processing step (out of scope for this release).
+
+---
+
+## [0.5.0] – 2026-02-22
+
+### Added
+- **Multilingual UI** – interface language selector in Settings → General
+  - Supported languages: English (default), Deutsch, Français, Español
+  - All UI strings, buttons, labels, status messages and dialogs translated
+  - Recognition language labels adapt to the selected UI language
+- **`T(key)` translation system** – central `TRANSLATIONS` dict covers all UI strings
+- **`UI_LANGUAGES` dict** – maps display names to language codes (`en/de/fr/es`)
+- **`_recog_lang_labels(ui)`** – returns recognition language dropdown labels
+  localized to the current UI language
+- **`ui_lang` setting** in `settings.json` and `DEFAULTS`
+- **`VERSION` constant** (`"0.5.0"`) at the top of `whisper_ptt_gui.py`
+
+### Changed
+- `LANGUAGES`, `DEVICES`, `COMPUTE_TYPES` dicts refactored: keys are now
+  language codes / device codes, values are display labels (reversed from v0.4)
+- `_section()` and `_flat_btn()` now accept translation keys directly
+- Settings window title and all tab labels now use `T()` translations
+- Model descriptions in Audio tab now use translation keys (`model_tiny`, etc.)
+- Hardware detection strings ("not available", "available") now translated
+- `_detect_hw()` uses `T("hw_not_available")` / `T("hw_available")`
+
+### Fixed
+- Recognition language code correctly resolved from localized label on save
+- Device and compute-type values correctly resolved from display labels on save
+
+---
+
+## [0.4.0] – 2026-02-22
+
+### Added
+- **Microphone watchdog** – detects silent/empty inputs after Windows reboot
+- **`start_audio_stream()` / `restart_audio_stream()`** – manages `sd.InputStream`
+  lifecycle with clean stop/start
+- **Windows mic permission request** with three fallback strategies:
+  1. `winrt.windows.media.capture.MediaCapture` (UWP API)
+  2. Windows Registry `ConsentStore\microphone` → `"Allow"` (winreg)
+  3. Open `ms-settings:privacy-microphone` + show instruction dialog
+- **`_silent_count` counter** – after `SILENT_THRESHOLD` (3) consecutive
+  silent recordings → triggers automatic mic restart
+- **`🎤↺` retry button** in the overlay status row:
+  - Normally dimmed, turns red when a mic problem is detected
+  - Manual trigger for `restart_audio_stream()`
+- **`mic_ok` / `mic_error` / `mic_stream_error` / `mic_permission_dialog`**
+  messages in `ui_queue` for thread-safe UI updates
+- **`_show_permission_hint()`** – shows instruction dialog when Windows
+  privacy settings are opened automatically
+- `subprocess`, `ctypes` added to imports (used by permission strategies)
+- `winrt-Windows.Media.Capture` added as optional dependency in `build_exe.bat`
+- `winreg`, `ctypes`, `subprocess` added to PyInstaller hidden imports
+
+### Changed
+- `audio_callback` now checks `status` parameter from PortAudio and pushes
+  `mic_stream_error` to `ui_queue` when the stream reports an error
+- `main()` no longer uses `with stream:` context manager; stream is managed
+  via `start_audio_stream()` + explicit cleanup on exit
+- `_on_close()` now explicitly stops and closes `_audio_stream`
+
+### Fixed
+- Stream errors after reboot (broken device handle) are now caught and recovered
+
+---
+
+## [0.3.0] – 2026-02-22
+
+### Added
+- **Separate "Recognized Text" panel** – clean text only, no timestamps
+- **Separate "Debug / Log" panel** – system messages with `[HH:MM:SS]` timestamps
+- **`_clean_texts` list** – stores recognized text without timestamps for copy
+- **📋 Copy** button – copies selection or last recognized text (no timestamp)
+- **📌 Paste** button – manually pastes last recognized text into active window
+- **🗑️ Clear** button per panel (recognized text + log independently clearable)
+- **`_flash(msg)`** – temporary status message with auto-revert
+- **`_append_recognized(text)`** – inserts into recognized text panel with `─────` separator
+- **`_append_log(text)`** – inserts timestamped message into debug panel
+
+### Fixed
+- **Settings window does not reopen** – `_settings_win` reference now cleared
+  via `on_close_cb` callback; `_on_settings_closed()` sets it to `None`
+- **Mouse buttons not recognized in hotkey recorder** – replaced `keyboard` library
+  with `pynput` for both keyboard and mouse support
+  - Thumb buttons (`mouse_x1`, `mouse_x2`), middle click, etc. now work
+- **Copy includes timestamp** – fixed by separating storage (`_clean_texts`)
+  from display (text widget with separators)
+- **Window drags instead of allowing text selection** – drag bindings moved
+  exclusively to title bar (`self._bar`); content area has no drag bindings
+- `keyboard` dependency removed; `pynput` replaces it for all input handling
+
+### Changed
+- PTT listener rebuilt with `pynput` (keyboard + optional mouse listener)
+- `start_ptt_listener()` / `stop_ptt_listener()` use `pynput.keyboard.Listener`
+  and `pynput.mouse.Listener`
+- `MOUSE_BTN_NAMES` dict maps `pynput.mouse.Button` → string names
+- Hotkey recorder in Settings also uses pynput (separate listener pair)
+- `_make_text_widget()` now uses `cursor="xterm"` to signal text is selectable
+
+---
+
+## [0.2.0] – 2026-02-21
+
+### Added
+- **Settings dialog** (⚙ button) with `ttk.Notebook` tabs:
+  - **General tab:** hotkey recorder, recognition language, paste mode,
+    sound feedback toggle, transparency slider
+  - **Audio/AI tab:** device selector with live hardware detection,
+    compute type, Whisper model selection with size/speed info
+  - **Advanced tab:** VAD toggle + silence threshold, beam size, reset button
+- **Hotkey recorder** – click "Record", press any key combination → saved
+- **Persistent settings** – `settings.json` saved next to executable
+- **NPU / DirectML support** alongside NVIDIA CUDA and CPU fallback
+- **`detect_devices()`** – auto-detects CUDA (torch), Intel NPU (OpenVINO),
+  AMD/Qualcomm NPU (ONNX Runtime DmlExecutionProvider)
+- **`resolve_device()`** – selects optimal device + compute type
+- **Live hardware detection** in Settings (runs async, updates label when done)
+- **`settings.json`** schema with all configurable keys
+- **`on_settings_saved()` callback** – reloads hotkey listener + model after save
+- **Window position persistence** (`window_x`, `window_y` in settings)
+- **Transparency setting** applied live via `-alpha` attribute
+
+### Changed
+- Model loading respects `cfg["device"]` and `cfg["compute_type"]`
+- Hotkey now configurable (was hardcoded `ctrl+alt+space`)
+- Language now configurable (was hardcoded `de`)
+
+---
+
+## [0.1.0] – 2026-02-20
+
+### Added
+- **Always-on-top overlay** window (frameless, `overrideredirect`)
+- **Voice meter** – real-time microphone level visualization (canvas bar)
+- **Status dot** with color-coded states and blinking animation during recording
+- **Push-to-talk** with `keyboard` library (hardcoded `ctrl+alt+space`)
+- **Local transcription** via `faster-whisper` (CUDA or CPU)
+- **Auto-paste** via clipboard (Ctrl+V) or direct typing (`pyautogui`)
+- **Audio feedback** beeps on start/stop
+- **Drag to reposition** via title bar
+- **Minimize** button (─) collapses content area
+- **Debug log** area (single panel at this stage)
+- **`ui_queue`** for thread-safe communication between audio/transcription
+  threads and the tkinter main thread
+- **`load_model()`** runs in background thread on startup
+- **PyInstaller build** via `build_exe.bat` and `whisper_ptt_gui.spec`
+
+---
+
+## Version History Summary
+
+| Version | Date       | Highlights |
+|---------|------------|------------|
+| 0.8.0   | 2026-03-18 | Microphone selection, first-time setup, non-blocking progress, flexible Python |
+| 0.7.0   | 2026-02-24 | Refactored into `ppt/` package (11 modules), thin entry point |
+| 0.6.0   | 2026-02-22 | Output language / translation (speak DE → paste EN) |
+| 0.5.0   | 2026-02-22 | Multilingual UI (EN/DE/FR/ES), T() translation system |
+| 0.4.0   | 2026-02-22 | Mic watchdog, Windows permission request, auto-restart |
+| 0.3.0   | 2026-02-22 | Dual text panels, pynput (mouse buttons), settings fix |
+| 0.2.0   | 2026-02-21 | Settings dialog, NPU support, persistent config |
+| 0.1.0   | 2026-02-20 | Initial release, basic overlay + PTT transcription |

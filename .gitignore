@@ -1,0 +1,45 @@
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# User config (dynamically created at runtime)
+settings.json
+settings.json.bak
+
+# Cache directories
+.claude/
+.pytest_cache/
+.mypy_cache/
+
+# Models (large, downloaded at runtime)
+models/
+
+# OS files
+Thumbs.db
+.DS_Store
+nul
+
+# Temporary
+*.tmp
+*.log
+*.pid
