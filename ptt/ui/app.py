@@ -39,6 +39,7 @@ class WhisperPTTApp:
         self._clean_texts  = []
         self._model_loaded = False
         self._loading_model = False
+        self._spinner_active = False
 
         self._build_window()
         self._build_ui()
@@ -258,7 +259,11 @@ class WhisperPTTApp:
 
     def _set_status(self, state_key, text):
         color = self.STATUS_COLORS.get(state_key, C["idle"])
-        self.dot_cv.itemconfig(self._dot, fill=color)
+        if state_key == "loading":
+            self._start_spinner()
+        else:
+            self._stop_spinner()
+            self.dot_cv.itemconfig(self._dot, fill=color)
         self.status_lbl.config(text=text,
                                fg=color if state_key not in ("ready","idle") else C["dim"])
         # Update model label when status changes to "ready"
@@ -267,6 +272,20 @@ class WhisperPTTApp:
             self.model_lbl.config(text=f"Model: {state.cfg['model']} ({device.upper()})")
         state.log(f"Status: {state_key} = {text}")
         if state_key == "record": self._pulse(color)
+
+    def _start_spinner(self):
+        self._spinner_active = True
+        self._spinner_step(0)
+
+    def _stop_spinner(self):
+        self._spinner_active = False
+
+    def _spinner_step(self, step):
+        if not self._spinner_active:
+            return
+        col = C["process"] if step % 2 == 0 else C["bg2"]
+        self.dot_cv.itemconfig(self._dot, fill=col)
+        self.root.after(400, lambda: self._spinner_step(step + 1))
 
     def _pulse(self, color, step=0):
         if not state.recording:

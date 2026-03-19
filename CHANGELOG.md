@@ -23,7 +23,13 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.8.1] – 2026-03-18 (In Progress)
+## [0.8.1] – 2026-03-19
+
+### Added
+- **Animated loading spinner** – status dot blinks orange ↔ dark during model load
+  - Reuses `root.after(400)` pattern from the existing record-pulse animation
+  - Controlled by `_spinner_active` flag; stops immediately when load completes
+  - Gives clear visual feedback at startup and after settings-triggered model reload
 
 ### Fixed
 - **Separate progress dialog removed** – was not working on NPU
@@ -33,9 +39,6 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - **First-time setup dialog location** – now defaults to executable directory instead of user home
   - Better for portable installations
   - `setup.py` uses `os.path.dirname(sys.executable)` to find exe location
-
-### Known Issues (In Progress)
-- Loading status text not always visible during model load (investigation ongoing)
 
 ---
 
@@ -291,6 +294,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 | Version | Date       | Highlights |
 |---------|------------|------------|
+| 0.8.1   | 2026-03-19 | Animated loading spinner, progress dialog removed, setup dialog location fix |
 | 0.8.0   | 2026-03-18 | Microphone selection, first-time setup, non-blocking progress, flexible Python |
 | 0.7.0   | 2026-02-24 | Refactored into `ppt/` package (11 modules), thin entry point |
 | 0.6.0   | 2026-02-22 | Output language / translation (speak DE → paste EN) |
