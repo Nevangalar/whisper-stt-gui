@@ -2,8 +2,8 @@
 ptt/audio.py – Microphone input, recording control, and stream management.
 """
 
+import os
 import time
-import subprocess
 
 import numpy as np
 import sounddevice as sd
@@ -29,7 +29,8 @@ def audio_callback(indata, frames, time_info, status):
     if status:
         state.ui_queue.put(("mic_stream_error", str(status)))
     if state.recording:
-        state.audio_chunks.append(indata.copy())
+        with state.record_lock:
+            state.audio_chunks.append(indata.copy())
 
 # ─── Recording control ─────────────────────────────────────────────────────────
 
@@ -75,8 +76,7 @@ def request_windows_mic_permission():
     except Exception as e:
         state.log(f"⚠️  Registry fix failed: {e}")
     try:
-        subprocess.Popen(["ms-settings:privacy-microphone"],
-                         shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        os.startfile("ms-settings:privacy-microphone")
         state.log("ℹ️  Windows mic settings opened.")
         state.ui_queue.put(("mic_permission_dialog", None))
     except Exception:

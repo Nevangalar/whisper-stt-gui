@@ -2,6 +2,7 @@
 ptt/ui/app.py – Main overlay window (WhisperPTTApp class).
 """
 
+import queue
 import time
 import threading
 import tkinter as tk
@@ -182,7 +183,7 @@ class WhisperPTTApp:
 
     def _copy_recog(self):
         try:    text = self.recog_txt.get("sel.first", "sel.last")
-        except: text = self._clean_texts[-1] if self._clean_texts else \
+        except tk.TclError: text = self._clean_texts[-1] if self._clean_texts else \
                         self.recog_txt.get("1.0", "end-1c").strip()
         if text:
             pyperclip.copy(text)
@@ -236,21 +237,23 @@ class WhisperPTTApp:
         try:
             while True:
                 msg = state.ui_queue.get_nowait()
-                if msg[0] == "status":
-                    self._set_status(msg[1], msg[2])
-
-                elif msg[0] == "recognized":
-                    self._append_recognized(msg[1])
-                elif msg[0] == "log":
-                    self._append_log(msg[1])
-                elif msg[0] == "mic_ok":
-                    self.mic_btn.config(fg=C["dim"])
-                elif msg[0] in ("mic_error", "mic_stream_error"):
-                    self.mic_btn.config(fg=C["record"])
-                    self._append_log(f"🎤 Mic error: {msg[1]}")
-                elif msg[0] == "mic_permission_dialog":
-                    self._show_permission_hint()
-        except Exception:
+                try:
+                    if msg[0] == "status":
+                        self._set_status(msg[1], msg[2])
+                    elif msg[0] == "recognized":
+                        self._append_recognized(msg[1])
+                    elif msg[0] == "log":
+                        self._append_log(msg[1])
+                    elif msg[0] == "mic_ok":
+                        self.mic_btn.config(fg=C["dim"])
+                    elif msg[0] in ("mic_error", "mic_stream_error"):
+                        self.mic_btn.config(fg=C["record"])
+                        self._append_log(f"🎤 Mic error: {msg[1]}")
+                    elif msg[0] == "mic_permission_dialog":
+                        self._show_permission_hint()
+                except Exception as e:
+                    state.log(f"⚠️ UI dispatch error ({msg[0]}): {e}")
+        except queue.Empty:
             pass
         self.root.after(50, self._poll_queue)
 
@@ -295,6 +298,8 @@ class WhisperPTTApp:
 
     def _append_recognized(self, text: str):
         self._clean_texts.append(text)
+        if len(self._clean_texts) > 50:
+            self._clean_texts = self._clean_texts[-50:]
         self.recog_txt.config(state="normal")
         if self.recog_txt.index("end-1c") != "1.0":
             self.recog_txt.insert("end", "\n─────\n")
@@ -322,11 +327,12 @@ class WhisperPTTApp:
 
     def _load_model_async(self):
         """Load model in background without blocking UI."""
-        if self._loading_model or self._model_loaded:
-            return
-        self._loading_model = True
+        with state.model_load_lock:
+            if self._loading_model or self._model_loaded:
+                return
+            self._loading_model = True
         self._set_status("loading", "Loading model...")
-        
+
         def _load():
             try:
                 load_model(
@@ -337,7 +343,7 @@ class WhisperPTTApp:
                 state.log(f"⚠️  Model load error: {e}")
             finally:
                 self._loading_model = False
-        
+
         threading.Thread(target=_load, daemon=True).start()
 
     # ── Settings ───────────────────────────────────────────────────────────────
@@ -362,27 +368,29 @@ class WhisperPTTApp:
         self._settings_win = None
 
     def _on_settings_saved(self, need_model_reload: bool):
-         self._settings_win = None
-         self.hotkey_lbl.config(text=state.cfg["hotkey"])
-         self.root.attributes("-alpha", state.cfg["opacity"])
-         # Force window update after settings applied
-         self.root.update_idletasks()
-         threading.Thread(target=start_ptt_listener, daemon=True).start()
-         
-         if need_model_reload and not self._loading_model:
-             # Load model in background with status updates to main window
-             self._loading_model = True
-             self._set_status("loading", "Loading model...")
-             
-             def _load_with_status():
-                 try:
-                     load_model(
-                         status_cb=lambda s, m: state.ui_queue.put(("status", s, m))
-                     )
-                 except Exception as e:
-                     state.log(f"Model load error: {e}")
-                     state.ui_queue.put(("status", "error", f"Model load failed: {e}"))
-                 finally:
-                     self._loading_model = False
-             
-             threading.Thread(target=_load_with_status, daemon=True).start()
+        self._settings_win = None
+        self.hotkey_lbl.config(text=state.cfg["hotkey"])
+        self.root.attributes("-alpha", state.cfg["opacity"])
+        self.root.update_idletasks()
+        threading.Thread(target=start_ptt_listener, daemon=True).start()
+
+        with state.model_load_lock:
+            _should_load = need_model_reload and not self._loading_model
+            if _should_load:
+                self._loading_model = True
+
+        if _should_load:
+            self._set_status("loading", "Loading model...")
+
+            def _load_with_status():
+                try:
+                    load_model(
+                        status_cb=lambda s, m: state.ui_queue.put(("status", s, m))
+                    )
+                except Exception as e:
+                    state.log(f"Model load error: {e}")
+                    state.ui_queue.put(("status", "error", f"Model load failed: {e}"))
+                finally:
+                    self._loading_model = False
+
+            threading.Thread(target=_load_with_status, daemon=True).start()

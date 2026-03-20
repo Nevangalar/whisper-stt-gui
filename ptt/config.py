@@ -33,7 +33,7 @@ def save_settings():
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(state.cfg, f, indent=2, ensure_ascii=False)
     except Exception as e:
-        print(f"Settings error: {e}")
+        state.ui_queue.put(("log", f"⚠️ Settings save error: {e}"))
 
 # ─── Model directory ───────────────────────────────────────────────────────────
 

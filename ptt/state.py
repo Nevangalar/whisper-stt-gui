@@ -14,6 +14,11 @@ recording    = False
 audio_chunks = []
 record_lock  = threading.Lock()
 
+# ─── Concurrency guards ────────────────────────────────────────────────────────
+
+model_load_lock = threading.Lock()   # guards _loading_model check-and-set
+ptt_lock        = threading.Lock()   # guards _ptt_active check-and-set
+
 # ─── Model handles ─────────────────────────────────────────────────────────────
 
 whisper_model  = None   # faster_whisper.WhisperModel  (CPU / CUDA)

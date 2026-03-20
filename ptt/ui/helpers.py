@@ -59,9 +59,6 @@ def _make_text_widget(parent, height=5):
     )
     txt.pack(side="left", fill="both", expand=True)
     sb.config(command=txt.yview)
-    txt.bind("<ButtonPress-1>",   lambda e: None)
-    txt.bind("<B1-Motion>",       lambda e: None)
-    txt.bind("<ButtonRelease-1>", lambda e: None)
     return txt
 
 # ─── Scrollable tab frame ──────────────────────────────────────────────────────

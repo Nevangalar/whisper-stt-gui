@@ -40,13 +40,13 @@ exe = EXE(
     pyz, a.scripts, [],
     exclude_binaries=True,
     name='WhisperPTT',
-    debug=False, strip=False, upx=True,
+    debug=False, strip=False, upx=False,
     console=False,
     icon=None,
 )
 
 coll = COLLECT(
     exe, a.binaries, a.datas,
-    strip=False, upx=True, upx_exclude=[],
+    strip=False, upx=False, upx_exclude=[],
     name='WhisperPTT',
 )
