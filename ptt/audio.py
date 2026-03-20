@@ -29,14 +29,13 @@ def audio_callback(indata, frames, time_info, status):
     if status:
         state.ui_queue.put(("mic_stream_error", str(status)))
     if state.recording:
-        with state.record_lock:
-            state.audio_chunks.append(indata.copy())
+        state.audio_chunks.append(indata.copy())
 
 # ─── Recording control ─────────────────────────────────────────────────────────
 
 def start_recording():
     with state.record_lock:
-        state.audio_chunks = []; state.recording = True
+        state.audio_chunks.clear(); state.recording = True
     state.ui_queue.put(("status", "record", T("recording")))
     if state.cfg["sound_feedback"]: _beep(660, 0.08)
 
@@ -56,7 +55,10 @@ def request_windows_mic_permission():
         async def _req():
             cap = wmc.MediaCapture()
             s   = wmc.MediaCaptureInitializationSettings()
-            s.stream_type = wmc.StreamingCaptureMode.AUDIO
+            try:
+                s.stream_type = wmc.StreamingCaptureMode.AUDIO
+            except AttributeError:
+                pass  # older winrt API does not have stream_type
             await cap.initialize_async(s)
             await cap.close_async()
         asyncio.run(_req())

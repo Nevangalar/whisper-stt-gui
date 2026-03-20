@@ -12,7 +12,7 @@ import pyperclip
 import pyautogui
 
 import ptt.state as state
-from ptt.constants import C
+from ptt.constants import C, VERSION
 from ptt.config import T, save_settings
 from ptt.audio import restart_audio_stream
 from ptt.hotkey import start_ptt_listener, stop_ptt_listener
@@ -79,7 +79,7 @@ class WhisperPTTApp:
         self._bar.bind("<B1-Motion>",       self._drag_motion)
         self._bar.bind("<ButtonRelease-1>", self._drag_end)
 
-        tk.Label(self._bar, text="🎤  Whisper PTT",
+        tk.Label(self._bar, text=f"🎤  Whisper PTT  v{VERSION}",
                  bg=C["accent"], fg=C["text"],
                  font=("Segoe UI", 9, "bold")).pack(side="left", padx=8, pady=5)
 

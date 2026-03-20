@@ -61,6 +61,7 @@ class SettingsWindow:
     def _on_close(self):
         self._stop_recorder()
         self.on_close_cb()
+        self.win.grab_release()
         self.win.destroy()
 
     # ── Notebook ───────────────────────────────────────────────────────────────
@@ -511,8 +512,8 @@ class SettingsWindow:
             state.cfg["model"], state.cfg["device"], state.cfg["compute_type"],
             state.cfg.get("models_dir", "")
         ) != self._model_snapshot
+        self.win.grab_release()
         self.win.destroy()
-        # Callback AFTER window is destroyed to avoid conflicts
         self.on_save_cb(need_reload)
 
     def _reset(self):
