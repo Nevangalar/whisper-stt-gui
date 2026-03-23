@@ -2,11 +2,10 @@
 ptt/constants.py – All compile-time constants (no runtime logic, no local imports).
 """
 
-VERSION = "0.8.0"
+VERSION = "0.8.2"
 
 import sys
 from pathlib import Path
-from pynput import mouse as pynput_ms
 
 # ─── Paths ──────────────────────────────────────────────────────────────────────
 
@@ -317,6 +316,10 @@ TRANSLATIONS = {
         "fr": "Beam Size  (qualité vs. vitesse)",
         "es": "Beam Size  (calidad vs. velocidad)",
     },
+    "beam_size_label": {
+        "en": "Beam Size:", "de": "Beam-Größe:",
+        "fr": "Taille du faisceau:", "es": "Tamaño de haz:",
+    },
     "beam_hint": {
         "en": "(1=fast, 5=default, 10=accurate)",
         "de": "(1=schnell, 5=Standard, 10=genau)",
@@ -520,13 +523,5 @@ MODELS_OV  = {
 }
 DEVICES      = {"auto": "Auto", "cuda": "NVIDIA CUDA", "npu": "NPU (OpenVINO)", "cpu": "CPU"}
 COMPUTE_TYPES = {"auto": "Auto", "float16": "float16 (GPU)", "int8": "int8", "float32": "float32 (CPU)"}
-
-MOUSE_BTN_NAMES = {
-    pynput_ms.Button.left:   "mouse_left",
-    pynput_ms.Button.right:  "mouse_right",
-    pynput_ms.Button.middle: "mouse_middle",
-    pynput_ms.Button.x1:     "mouse_x1",
-    pynput_ms.Button.x2:     "mouse_x2",
-}
 
 SILENT_THRESHOLD = 3

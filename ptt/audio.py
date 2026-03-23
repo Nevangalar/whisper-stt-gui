@@ -2,8 +2,8 @@
 ptt/audio.py – Microphone input, recording control, and stream management.
 """
 
+import os
 import time
-import subprocess
 
 import numpy as np
 import sounddevice as sd
@@ -35,7 +35,7 @@ def audio_callback(indata, frames, time_info, status):
 
 def start_recording():
     with state.record_lock:
-        state.audio_chunks = []; state.recording = True
+        state.audio_chunks.clear(); state.recording = True
     state.ui_queue.put(("status", "record", T("recording")))
     if state.cfg["sound_feedback"]: _beep(660, 0.08)
 
@@ -55,7 +55,10 @@ def request_windows_mic_permission():
         async def _req():
             cap = wmc.MediaCapture()
             s   = wmc.MediaCaptureInitializationSettings()
-            s.stream_type = wmc.StreamingCaptureMode.AUDIO
+            try:
+                s.stream_type = wmc.StreamingCaptureMode.AUDIO
+            except AttributeError:
+                pass  # older winrt API does not have stream_type
             await cap.initialize_async(s)
             await cap.close_async()
         asyncio.run(_req())
@@ -75,8 +78,7 @@ def request_windows_mic_permission():
     except Exception as e:
         state.log(f"⚠️  Registry fix failed: {e}")
     try:
-        subprocess.Popen(["ms-settings:privacy-microphone"],
-                         shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        os.startfile("ms-settings:privacy-microphone")
         state.log("ℹ️  Windows mic settings opened.")
         state.ui_queue.put(("mic_permission_dialog", None))
     except Exception:

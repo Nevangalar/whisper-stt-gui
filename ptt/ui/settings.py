@@ -12,8 +12,9 @@ from pynput import mouse    as pynput_ms
 import ptt.state as state
 from ptt.constants import (
     C, DEFAULTS, TRANSLATIONS, UI_LANGUAGES, MODELS,
-    DEVICES, COMPUTE_TYPES, MOUSE_BTN_NAMES, _recog_lang_labels,
+    DEVICES, COMPUTE_TYPES, _recog_lang_labels,
 )
+from ptt.hotkey import MOUSE_BTN_NAMES, _pynput_key_name
 from ptt.config import T, save_settings, get_models_dir
 from ptt.hardware import detect_devices, get_mic_devices
 from ptt.ui.helpers import _lighten, _section, _flat_btn, _scrollable_tab
@@ -49,7 +50,9 @@ class SettingsWindow:
         self.win.protocol("WM_DELETE_WINDOW", self._on_close)
 
         px, py = parent.winfo_x(), parent.winfo_y()
-        self.win.geometry(f"460x720+{max(0, px-470)}+{py}")
+        sh = self.win.winfo_screenheight()
+        win_h = min(720, sh - 80)
+        self.win.geometry(f"460x{win_h}+{max(0, px-470)}+{py}")
 
         self._build()
         self._load_values()
@@ -58,6 +61,7 @@ class SettingsWindow:
     def _on_close(self):
         self._stop_recorder()
         self.on_close_cb()
+        self.win.grab_release()
         self.win.destroy()
 
     # ── Notebook ───────────────────────────────────────────────────────────────
@@ -293,7 +297,7 @@ class SettingsWindow:
         _section(p, "sec_beam")
         beam_row = tk.Frame(p, bg=C["bg"])
         beam_row.pack(anchor="w", pady=(4,0))
-        tk.Label(beam_row, text="Beam Size:", bg=C["bg"], fg=C["text"],
+        tk.Label(beam_row, text=T("beam_size_label"), bg=C["bg"], fg=C["text"],
                  font=("Segoe UI", 9)).pack(side="left")
         self.beam_var = tk.IntVar()
         tk.Spinbox(beam_row, textvariable=self.beam_var,
@@ -389,8 +393,8 @@ class SettingsWindow:
         ]
         text = "   |   ".join(parts)
         try:
-            self.dev_lbl.config(text=text)
-            self.hw_info_lbl.config(text=text)
+            self.win.after(0, lambda t=text: self.dev_lbl.config(text=t))
+            self.win.after(0, lambda t=text: self.hw_info_lbl.config(text=t))
         except Exception:
             pass
 
@@ -409,14 +413,14 @@ class SettingsWindow:
 
         def on_kb_press(key):
             if not self._recording_hotkey: return
-            kn = self._key_name(key)
+            kn = _pynput_key_name(key)
             self._held_kb.add(kn)
             try: self.hotkey_var.set(self._build_combo())
             except Exception: pass
 
         def on_kb_release(key):
             if not self._recording_hotkey: return
-            kn = self._key_name(key)
+            kn = _pynput_key_name(key)
             combo = self._build_combo()
             if any(k not in {"ctrl","alt","shift","cmd","windows"}
                    for k in (self._held_kb | self._held_ms)):
@@ -456,18 +460,6 @@ class SettingsWindow:
             self.rec_btn.config(text=T("btn_record"), bg=C["record"])
             self.hk_hint.config(text="")
         except Exception: pass
-
-    @staticmethod
-    def _key_name(key) -> str:
-        try: return key.char.lower()
-        except AttributeError:
-            name = str(key).replace("Key.", "").lower()
-            for old, new in [("ctrl_l","ctrl"),("ctrl_r","ctrl"),
-                             ("alt_l","alt"),("alt_r","alt"),("alt_gr","alt"),
-                             ("shift_l","shift"),("shift_r","shift"),
-                             ("cmd_l","cmd"),("cmd_r","cmd")]:
-                name = name.replace(old, new)
-            return name
 
     def _build_combo(self) -> str:
         priority = ["ctrl","alt","shift","cmd","windows"]
@@ -520,8 +512,8 @@ class SettingsWindow:
             state.cfg["model"], state.cfg["device"], state.cfg["compute_type"],
             state.cfg.get("models_dir", "")
         ) != self._model_snapshot
+        self.win.grab_release()
         self.win.destroy()
-        # Callback AFTER window is destroyed to avoid conflicts
         self.on_save_cb(need_reload)
 
     def _reset(self):

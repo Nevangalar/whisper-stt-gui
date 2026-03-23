@@ -33,6 +33,7 @@ def transcribe_and_paste():
 
     with state.record_lock:
         chunks = list(state.audio_chunks)
+        state.audio_chunks.clear()
     if not chunks:
         state.ui_queue.put(("status", "ready", T("ready"))); return
 

@@ -57,6 +57,12 @@ def load_model(status_cb=None):
     state.log(f"ℹ️  Device: {lbl} | Compute: {c} | Model: {state.cfg['model']}")
     try:
         from faster_whisper import WhisperModel
+    except ImportError as e:
+        if status_cb: status_cb("error", T("load_error"))
+        state.log(f"❌ faster-whisper not installed: {e}")
+        return
+
+    try:
         state.whisper_model = WhisperModel(
             state.cfg["model"], device=d, compute_type=c,
             download_root=str(get_models_dir()),
@@ -66,7 +72,6 @@ def load_model(status_cb=None):
     except Exception as e:
         state.log(f"⚠️  {lbl} failed: {e}")
         try:
-            from faster_whisper import WhisperModel
             state.whisper_model = WhisperModel(
                 state.cfg["model"], device="cpu", compute_type="int8",
                 download_root=str(get_models_dir()),

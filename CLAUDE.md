@@ -249,7 +249,7 @@ python whisper_ptt_gui.py
 
 ## Recent Changes (v0.8.0 - v0.8.1)
 
-### v0.8.1 (In Progress - 2026-03-18)
+### v0.8.1 (2026-03-19)
 - **Removed separate progress dialog** – was broken on NPU ✓
   - File deleted: `ppt/ui/progress.py`
   - Model loading now shows status in main window LED + text (like at startup)
@@ -259,28 +259,10 @@ python whisper_ptt_gui.py
   - File: `ppt/ui/setup.py`
   - Uses `os.path.dirname(sys.executable)` for default browse path
 
-### CRITICAL BUGS - Still Being Fixed
-1. **Model loading blocks UI when changed in settings** ⚠️ PRIORITY
-   - When user changes model in Settings, app says "not responding"
-   - Window is not movable during loading
-   - Problem: Model loading is blocking the main thread (UI thread)
-   - Solution needed: Ensure model loading runs in daemon thread, UI thread stays responsive
-   - File: `ppt/ui/app.py` - `_on_settings_saved()` method
-
-2. **Loading only works at startup, not after settings change**
-   - At startup: `_load_model_async()` works fine (background thread)
-   - After settings change: Model doesn't reload (or blocks completely)
-   - Both should use same pattern with `threading.Thread(daemon=True)`
-
-3. **Need visual progress indicator**
-   - Add animated progress bar or spinner in main window during loading
-   - Show "Loading... (1/3)" or similar progress
-   - Prevents user from thinking app crashed
-
-4. **Show current model in main window**
-   - Display which model is loaded (e.g., "Model: medium (NPU)")
-   - Location: next to microphone label OR below debug log
-   - Update whenever model changes
+### v0.8.1 additions ✓
+- **Animated loading spinner** – `_spinner_active` flag + `_start_spinner()` / `_stop_spinner()` / `_spinner_step()` in `ptt/ui/app.py`; `_set_status("loading", ...)` triggers it; dot blinks orange ↔ `C["bg2"]` at 400 ms
+- **Threading fixed** – both startup (`_load_model_async`) and settings-triggered reload (`_on_settings_saved`) use `daemon=True` background threads with `state.ui_queue` status callbacks
+- **Current model shown** – `model_lbl` in status row updates to `"Model: <name> (<DEVICE>)"` when status becomes `"ready"`
 
 ---
 
@@ -294,15 +276,13 @@ python whisper_ptt_gui.py
 - Translation (`output_language = "en"`) only works with Whisper's native `task="translate"`,
   which supports English as the sole target language; other target languages are not yet
   supported without an external translation library
-- **[v0.8.1]** Loading status text sometimes not visible during model load (in investigation)
-- **[v0.8.1]** First-time setup uses home directory instead of exe directory
 
 ---
 
 ## Version
 
-Current version: **0.8.1** (in progress)
-Version constant in code: `VERSION = "0.8.0"` (`ppt/constants.py`) - will bump to 0.8.1 when done
+Current version: **0.8.1**
+Version constant in code: `VERSION = "0.8.1"` (`ptt/constants.py`)
 
 Versioning scheme: `MAJOR.MINOR.PATCH`
 - **MAJOR** – breaking changes (config format, complete rewrites)

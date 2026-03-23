@@ -23,7 +23,56 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.8.1] – 2026-03-18 (In Progress)
+## [0.8.2] – 2026-03-20
+
+### Fixed
+- **CRITICAL: `constants.py` no longer imports `pynput`** at module level
+  - `MOUSE_BTN_NAMES` moved to `ptt/hotkey.py` where `pynput` is already a declared dependency
+  - `constants.py` is now truly import-safe in headless/test environments
+- **Thread safety: `audio_callback` now holds `record_lock` before appending**
+  - Eliminates potential chunk loss on rapid PTT toggle
+  - Lock-protected on all platforms including future no-GIL builds (PEP 703)
+- **Thread safety: `_loading_model` flag protected by `state.model_load_lock`**
+  - Two rapid settings saves can no longer trigger concurrent model loads
+  - `state.model_load_lock` and `state.ptt_lock` added to `ptt/state.py`
+- **Thread safety: `_ptt_active` flag protected by `state.ptt_lock`**
+  - Simultaneous keyboard + mouse events can no longer both trigger `start_recording()`
+- **Thread safety: `_detect_hw` widget updates via `win.after(0, ...)`**
+  - Hardware detection results no longer written to tkinter from background thread
+- **`_poll_queue` now catches only `queue.Empty`** instead of bare `except Exception`
+  - Real dispatch errors are logged via `state.log()` instead of silently discarded
+- **`model_manager.py` duplicate `faster_whisper` import removed** — hoisted to single import
+- **`transcribe.py` clears `audio_chunks` after snapshot** — prevents stale chunks on rapid PTT
+- **`config.save_settings` errors now pushed to UI log** instead of silently printed to stdout
+  (stdout is `/dev/null` in PyInstaller windowed builds)
+- **`subprocess.Popen(shell=True)` replaced with `os.startfile()`** in `audio.py`
+- **`_copy_recog` uses `except tk.TclError`** instead of bare `except`
+- **`_clean_texts` capped at 50 entries** — prevents unbounded memory growth in long sessions
+- **Dead no-op event bindings removed** from `_make_text_widget` in `ui/helpers.py`
+- **Settings window height capped** to `min(720, screen_height - 80)` — buttons no longer
+  clipped on small screens / Surface Go
+- **`_key_name` de-duplicated** — `SettingsWindow._key_name` removed; both call sites now
+  use `_pynput_key_name` from `ptt.hotkey`
+- **Beam Size label i18n'd** — added `beam_size_label` key to `TRANSLATIONS` (en/de/fr/es)
+
+### Added
+- **`requirements.txt`** — core dependencies with version ranges for reproducible installs
+- **`state.model_load_lock`** — `threading.Lock` guarding model load check-and-set
+- **`state.ptt_lock`** — `threading.Lock` guarding PTT active flag check-and-set
+
+### Changed
+- **PyInstaller spec: `upx=False`** — UPX disabled to prevent silent corruption of
+  CUDA / OpenVINO / ctranslate2 DLLs that contain custom PE sections
+
+---
+
+## [0.8.1] – 2026-03-19
+
+### Added
+- **Animated loading spinner** – status dot blinks orange ↔ dark during model load
+  - Reuses `root.after(400)` pattern from the existing record-pulse animation
+  - Controlled by `_spinner_active` flag; stops immediately when load completes
+  - Gives clear visual feedback at startup and after settings-triggered model reload
 
 ### Fixed
 - **Separate progress dialog removed** – was not working on NPU
@@ -33,9 +82,6 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - **First-time setup dialog location** – now defaults to executable directory instead of user home
   - Better for portable installations
   - `setup.py` uses `os.path.dirname(sys.executable)` to find exe location
-
-### Known Issues (In Progress)
-- Loading status text not always visible during model load (investigation ongoing)
 
 ---
 
@@ -291,6 +337,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 | Version | Date       | Highlights |
 |---------|------------|------------|
+| 0.8.2   | 2026-03-20 | 18 fixes: thread safety, error handling, code quality, build (architect review) |
+| 0.8.1   | 2026-03-19 | Animated loading spinner, progress dialog removed, setup dialog location fix |
 | 0.8.0   | 2026-03-18 | Microphone selection, first-time setup, non-blocking progress, flexible Python |
 | 0.7.0   | 2026-02-24 | Refactored into `ppt/` package (11 modules), thin entry point |
 | 0.6.0   | 2026-02-22 | Output language / translation (speak DE → paste EN) |

@@ -8,7 +8,14 @@ from pynput import keyboard as pynput_kb
 from pynput import mouse    as pynput_ms
 
 import ptt.state as state
-from ptt.constants import MOUSE_BTN_NAMES
+
+MOUSE_BTN_NAMES = {
+    pynput_ms.Button.left:   "mouse_left",
+    pynput_ms.Button.right:  "mouse_right",
+    pynput_ms.Button.middle: "mouse_middle",
+    pynput_ms.Button.x1:     "mouse_x1",
+    pynput_ms.Button.x2:     "mouse_x2",
+}
 
 # ─── Hotkey parsing ────────────────────────────────────────────────────────────
 
@@ -84,14 +91,18 @@ def stop_ptt_listener():
 
 def _ptt_trigger_press():
     from ptt.audio import start_recording
-    if not state._ptt_active and (state.whisper_model is not None or state.openvino_pipe is not None):
+    with state.ptt_lock:
+        if state._ptt_active or (state.whisper_model is None and state.openvino_pipe is None):
+            return
         state._ptt_active = True
-        start_recording()
+    start_recording()
 
 def _ptt_trigger_release():
     from ptt.audio import stop_recording
     from ptt.transcribe import transcribe_and_paste
-    if state._ptt_active:
+    with state.ptt_lock:
+        if not state._ptt_active:
+            return
         state._ptt_active = False
-        stop_recording()
-        threading.Thread(target=transcribe_and_paste, daemon=True).start()
+    stop_recording()
+    threading.Thread(target=transcribe_and_paste, daemon=True).start()

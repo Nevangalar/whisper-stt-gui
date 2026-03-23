@@ -1,0 +1,31 @@
+# Whisper PTT – Python dependencies
+# Install GPU support first (optional):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+#
+# Then install the rest:
+#   pip install -r requirements.txt
+
+# Core transcription
+faster-whisper>=1.0.0
+
+# Audio
+sounddevice>=0.4.6
+soundfile>=0.12.1
+numpy>=1.24.0
+
+# Input handling
+pynput>=1.7.6
+
+# Clipboard / paste
+pyperclip>=1.8.2
+pyautogui>=0.9.54
+
+# Build / packaging
+pyinstaller>=6.0.0
+
+# Optional – Intel NPU support
+# openvino-genai
+# huggingface-hub
+
+# Optional – Windows mic permission (may not install on all Python versions)
+# winrt-Windows.Media.Capture
