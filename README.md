@@ -1,10 +1,10 @@
 # 🎤 Whisper PTT
 
-**Push-to-talk speech recognition with a local Whisper model – always-on-top overlay for Windows**
+**Push-to-talk speech recognition with a local Whisper model – always-on-top overlay for Windows and Linux**
 
 Hold a hotkey (or a mouse button), speak, release – the recognized text is automatically pasted into whatever window is currently active. Runs entirely **locally** on your GPU, NPU, or CPU with no cloud API, no internet connection required, and no data leaving your machine.
 
-![Platform](https://img.shields.io/badge/Platform-Windows-blue)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
@@ -69,30 +69,40 @@ Hold a hotkey (or a mouse button), speak, release – the recognized text is aut
 
 ## 📋 Requirements
 
+### Windows
 - **Windows 10 / 11** (64-bit)
 - **Python 3.10 or newer** → [python.org](https://www.python.org/downloads/)
 - **NVIDIA GPU** with CUDA support (recommended) **or** Intel NPU **or** CPU only
 - A working microphone
 
+### Linux
+- **Ubuntu 22.04 / 24.04** or any modern distro with PipeWire or PulseAudio
+- **Python 3.10 or newer**
+- **Wayland or X11** (both supported)
+- A working microphone
+- System packages: `sudo apt install portaudio19-dev wtype wl-clipboard ydotool`
+
 ---
 
 ## 🚀 Installation
 
-### 1. Clone the repository
+### Windows
+
+#### 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/whisper-ptt.git
-cd whisper-ptt
+git clone https://github.com/Nevangalar/whisper-stt-gui.git
+cd whisper-stt-gui
 ```
 
-### 2. Create a virtual environment
+#### 2. Create a virtual environment
 
 ```bash
 python -m venv venv
 venv\Scripts\activate
 ```
 
-### 3. Install dependencies
+#### 3. Install dependencies
 
 **NVIDIA GPU (CUDA 12.1):**
 ```bash
@@ -112,13 +122,75 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install faster-whisper sounddevice soundfile numpy pynput pyperclip pyautogui openvino
 ```
 
-> **Note:** On first launch, the Whisper model (~150 MB for `base`) will be downloaded automatically and cached in the `models/` folder. After that, everything runs offline.
-
-### 4. Run
+#### 4. Run
 
 ```bash
 python whisper_ptt_gui.py
 ```
+
+---
+
+### Linux (Wayland / X11)
+
+#### 1. Clone the repository
+
+```bash
+git clone https://github.com/Nevangalar/whisper-stt-gui.git
+cd whisper-stt-gui
+```
+
+#### 2. Install system packages
+
+```bash
+sudo apt install portaudio19-dev wl-clipboard wtype ydotool
+```
+
+#### 3. Add yourself to the `input` group (required for Wayland hotkeys)
+
+```bash
+sudo usermod -aG input $USER
+```
+
+> ⚠️ **You must fully log out of your desktop session and log back in** (not just close terminals) for the group change to take effect. Verify with `groups` – `input` must appear in the list.
+
+#### 4. Create a virtual environment and install dependencies
+
+**NVIDIA GPU (CUDA):**
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install torch --index-url https://download.pytorch.org/whl/cu121
+pip install faster-whisper sounddevice soundfile numpy pynput pyperclip pyautogui evdev
+```
+
+**CPU only:**
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install faster-whisper sounddevice soundfile numpy pynput pyperclip pyautogui evdev
+```
+
+#### 5. Run
+
+```bash
+source venv/bin/activate
+python3 whisper_ptt_gui.py
+```
+
+#### Linux notes
+
+| Feature | How it works on Linux |
+|---|---|
+| **Hotkey (Wayland)** | `evdev` reads `/dev/input/event*` directly – requires `input` group |
+| **Hotkey (X11)** | `pynput` as on Windows |
+| **Default hotkey** | `ctrl+space` (avoids compositor grab of `ctrl+alt` combos) |
+| **Auto-paste (GNOME Wayland)** | `ydotool type` via `/dev/uinput` |
+| **Auto-paste (KDE/wlroots)** | `wtype` |
+| **Auto-paste (X11)** | `pyautogui` as on Windows |
+| **Clipboard** | `wl-copy` on Wayland, tkinter + pyperclip on X11 |
+
+> **Note:** On first launch, the Whisper model (~150 MB for `base`) will be downloaded automatically and cached in the `models/` folder. After that, everything runs offline.
 
 ---
 
@@ -222,17 +294,29 @@ All settings are configured via the ⚙ menu in the overlay and saved automatica
 
 ## 🔧 Dependencies
 
+### Python packages
+
+| Package | Platform | Purpose |
+|---|---|---|
+| `faster-whisper` | all | Local Whisper transcription (CTranslate2) |
+| `torch` | all | PyTorch (CUDA backend for GPU acceleration) |
+| `sounddevice` | all | Microphone recording |
+| `soundfile` | all | WAV file writing / reading |
+| `numpy` | all | Audio data processing |
+| `pynput` | all | Global hotkeys (X11 / Windows); mouse button support |
+| `pyperclip` | all | Clipboard access fallback |
+| `pyautogui` | all | Keyboard simulation on X11 / Windows |
+| `evdev` | Linux only | Raw kernel input events for Wayland hotkeys |
+| `tkinter` | all | GUI (included in Python standard library) |
+
+### System packages (Linux)
+
 | Package | Purpose |
 |---|---|
-| `faster-whisper` | Local Whisper transcription (optimized via CTranslate2) |
-| `torch` | PyTorch (CUDA backend for GPU acceleration) |
-| `sounddevice` | Microphone recording |
-| `soundfile` | WAV file writing / reading |
-| `numpy` | Audio data processing |
-| `pynput` | Global hotkeys including mouse button support |
-| `pyperclip` | Clipboard access |
-| `pyautogui` | Keyboard simulation (Ctrl+V) |
-| `tkinter` | GUI (included in Python standard library) |
+| `portaudio19-dev` | PortAudio headers (required by `sounddevice`) |
+| `wl-clipboard` (`wl-copy`) | Wayland clipboard management |
+| `ydotool` | Simulate keystrokes via `/dev/uinput` on GNOME Wayland |
+| `wtype` | Simulate keystrokes on KDE / wlroots Wayland |
 
 ---
 
@@ -248,7 +332,7 @@ If `False`: check your CUDA version with `nvidia-smi` and install the matching P
 ```bash
 python -c "import sounddevice as sd; print(sd.query_devices())"
 ```
-Check the default recording device in Windows Sound Settings.
+Check the default recording device in Windows Sound Settings / PipeWire/PulseAudio settings on Linux.
 
 **Model doesn't download / setup hangs:**
 On first launch, you'll see a setup dialog. If it doesn't appear or the dialog gets stuck:
@@ -256,8 +340,11 @@ On first launch, you'll see a setup dialog. If it doesn't appear or the dialog g
 2. Make sure `settings.json` doesn't exist yet (or delete it to reset)
 3. If behind a corporate proxy, set the environment variable:
 ```bash
+# Windows
 set HTTPS_PROXY=http://proxy.company.com:8080
-python whisper_ppt_gui.py
+# Linux
+export HTTPS_PROXY=http://proxy.company.com:8080
+python whisper_ptt_gui.py
 ```
 
 **Model download fails on first start:**
@@ -266,8 +353,25 @@ An internet connection (~150 MB) is required for the initial model download. Aft
 **Auto-paste doesn't work in certain applications:**
 Switch the paste mode to `Direct typing` in the Settings menu.
 
-**Settings window doesn't open a second time:**
-This was a known bug fixed in v3. Make sure you're running the latest version.
+**[Linux] Hotkey not working on Wayland:**
+The app uses `evdev` to read keyboard events directly. Make sure:
+1. You are in the `input` group: `groups` must list `input`
+2. If not: `sudo usermod -aG input $USER` then **fully log out of your desktop and log back in**
+3. `evdev` is installed: `pip install evdev`
+
+**[Linux] Auto-paste not working on GNOME Wayland:**
+GNOME does not support the virtual keyboard protocol used by `wtype`. Install `ydotool` instead:
+```bash
+sudo apt install ydotool
+```
+The app will use `ydotool type` automatically on GNOME Wayland.
+
+**[Linux] ALSA errors at startup:**
+```
+Expression 'PaAlsaStream_Configure...' failed
+```
+These are harmless. The app automatically falls back to the system default audio device.
+If audio still doesn't work: `sudo apt install portaudio19-dev` and reinstall `sounddevice`.
 
 ---
 

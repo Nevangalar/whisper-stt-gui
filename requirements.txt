@@ -1,9 +1,14 @@
 # Whisper PTT – Python dependencies
+#
 # Install GPU support first (optional):
 #   pip install torch --index-url https://download.pytorch.org/whl/cu121
 #
 # Then install the rest:
 #   pip install -r requirements.txt
+#
+# Linux additional system packages:
+#   sudo apt install portaudio19-dev wl-clipboard wtype ydotool
+#   sudo usermod -aG input $USER  # for Wayland hotkey support (requires re-login)
 
 # Core transcription
 faster-whisper>=1.0.0
@@ -20,8 +25,11 @@ pynput>=1.7.6
 pyperclip>=1.8.2
 pyautogui>=0.9.54
 
-# Build / packaging
+# Build / packaging (Windows only)
 pyinstaller>=6.0.0
+
+# Optional – Linux Wayland hotkey support
+# evdev>=1.6.0
 
 # Optional – Intel NPU support
 # openvino-genai
