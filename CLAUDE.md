@@ -251,12 +251,12 @@ python whisper_ptt_gui.py
 
 ### v0.8.1 (2026-03-19)
 - **Removed separate progress dialog** – was broken on NPU ✓
-  - File deleted: `ppt/ui/progress.py`
+  - File deleted: `ptt/ui/progress.py`
   - Model loading now shows status in main window LED + text (like at startup)
   - Uses `state.ui_queue` with `("status", key, message)` tuples
-  - See `_on_settings_saved()` in `ppt/ui/app.py` for pattern
+  - See `_on_settings_saved()` in `ptt/ui/app.py` for pattern
 - **First-time setup uses exe directory** ✓
-  - File: `ppt/ui/setup.py`
+  - File: `ptt/ui/setup.py`
   - Uses `os.path.dirname(sys.executable)` for default browse path
 
 ### v0.8.1 additions ✓
@@ -281,8 +281,8 @@ python whisper_ptt_gui.py
 
 ## Version
 
-Current version: **0.8.1**
-Version constant in code: `VERSION = "0.8.1"` (`ptt/constants.py`)
+Current version: **0.8.3**
+Version constant in code: `VERSION = "0.8.3"` (`ptt/constants.py`)
 
 Versioning scheme: `MAJOR.MINOR.PATCH`
 - **MAJOR** – breaking changes (config format, complete rewrites)

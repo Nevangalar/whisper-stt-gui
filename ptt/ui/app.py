@@ -2,7 +2,9 @@
 ptt/ui/app.py – Main overlay window (WhisperPTTApp class).
 """
 
+import os
 import queue
+import subprocess
 import time
 import threading
 import tkinter as tk
@@ -41,6 +43,9 @@ class WhisperPTTApp:
         self._model_loaded = False
         self._loading_model = False
         self._spinner_active = False
+
+        self._dx = 0
+        self._dy = 0
 
         self._build_window()
         self._build_ui()
@@ -165,6 +170,7 @@ class WhisperPTTApp:
 
         br2 = tk.Frame(self.content, bg=C["bg"])
         br2.pack(fill="x", pady=(0, 0))
+        _flat_btn(br2, "btn_copy_log",  C["btn_copy"],  self._copy_debug ).pack(side="left")
         _flat_btn(br2, "btn_clear_log", C["btn_clear"], self._clear_debug).pack(side="right")
 
     # ── Drag (title bar only) ──────────────────────────────────────────────────
@@ -181,26 +187,104 @@ class WhisperPTTApp:
 
     # ── Actions ────────────────────────────────────────────────────────────────
 
+    def _tk_copy(self, text: str):
+        """Copy text to clipboard.
+        On Wayland: use wl-copy (most reliable; keeps clipboard after app exits).
+        On X11: tkinter owns CLIPBOARD selection + pyperclip for UTF8_STRING.
+        """
+        if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
+            try:
+                subprocess.run(["wl-copy", "--"], input=text.encode(), timeout=3)
+                return
+            except FileNotFoundError:
+                state.log("⚠️  wl-copy not found – install: sudo apt install wl-clipboard")
+            except Exception:
+                pass
+        # X11 / fallback
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.root.update()
+        try:
+            pyperclip.copy(text)
+        except Exception:
+            pass
+
+    def _do_type_or_paste(self, text: str):
+        """On Wayland: type text directly via ydotool (most reliable on GNOME).
+        On X11: simulate Ctrl+V via pyautogui."""
+        def _run():
+            if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
+                try:
+                    subprocess.run(
+                        ["ydotool", "type", "--key-delay", "0", "--", text],
+                        timeout=30,
+                    )
+                    return
+                except FileNotFoundError:
+                    state.log("⚠️  ydotool not found – install: sudo apt install ydotool")
+                except Exception as e:
+                    state.log(f"⚠️  ydotool type failed: {e}")
+                # fallback: Ctrl+V
+                self._simulate_paste()
+            else:
+                self._simulate_paste()
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _simulate_paste(self):
+        """Simulate Ctrl+V in the active window.
+        GNOME Wayland: ydotool (uinput-based, no compositor protocol needed).
+        Other Wayland:  wtype fallback.
+        X11:            pyautogui.
+        """
+        if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
+            # ydotool works on GNOME Wayland via /dev/uinput (no special protocol needed)
+            try:
+                subprocess.run(["ydotool", "key", "ctrl+v"], timeout=5)
+                return
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                state.log(f"⚠️  ydotool failed: {e}")
+            # wtype works on KDE/wlroots compositors
+            try:
+                subprocess.run(["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"], timeout=3)
+                return
+            except FileNotFoundError:
+                state.log("⚠️  Auto-paste: install ydotool (sudo apt install ydotool)")
+            except Exception as e:
+                state.log(f"⚠️  wtype failed: {e}")
+        else:
+            try:
+                pyautogui.hotkey("ctrl", "v")
+            except Exception as e:
+                state.log(f"⚠️  pyautogui paste failed: {e}")
+
     def _copy_recog(self):
         try:    text = self.recog_txt.get("sel.first", "sel.last")
         except tk.TclError: text = self._clean_texts[-1] if self._clean_texts else \
                         self.recog_txt.get("1.0", "end-1c").strip()
         if text:
-            pyperclip.copy(text)
+            self._tk_copy(text)
             self._flash(T("flash_copied"))
 
     def _paste_recog(self):
         text = self._clean_texts[-1] if self._clean_texts else \
                self.recog_txt.get("1.0", "end-1c").strip()
         if text:
-            pyperclip.copy(text)
-            self.root.after(150, lambda: pyautogui.hotkey("ctrl", "v"))
+            self._tk_copy(text)
+            self.root.after(150, self._simulate_paste)
             self._flash(T("flash_pasted"))
 
     def _clear_recog(self):
         self._clean_texts.clear()
         self.recog_txt.config(state="normal")
         self.recog_txt.delete("1.0", "end")
+
+    def _copy_debug(self):
+        text = self.debug_txt.get("1.0", "end-1c").strip()
+        if text:
+            self._tk_copy(text)
+            self._flash(T("flash_copied"))
 
     def _clear_debug(self):
         self.debug_txt.config(state="normal")
@@ -246,6 +330,9 @@ class WhisperPTTApp:
                         self._append_log(msg[1])
                     elif msg[0] == "mic_ok":
                         self.mic_btn.config(fg=C["dim"])
+                    elif msg[0] == "clipboard_paste":
+                        self._tk_copy(msg[1])  # always copy to clipboard too (for manual paste)
+                        self.root.after(120, lambda t=msg[1]: self._do_type_or_paste(t))
                     elif msg[0] in ("mic_error", "mic_stream_error"):
                         self.mic_btn.config(fg=C["record"])
                         self._append_log(f"🎤 Mic error: {msg[1]}")
@@ -270,10 +357,9 @@ class WhisperPTTApp:
         self.status_lbl.config(text=text,
                                fg=color if state_key not in ("ready","idle") else C["dim"])
         # Update model label when status changes to "ready"
-        if state_key == "ready" and state.whisper_model:
+        if state_key == "ready" and (state.whisper_model or state.openvino_pipe):
             device = state.cfg.get("device", "unknown")
             self.model_lbl.config(text=f"Model: {state.cfg['model']} ({device.upper()})")
-        state.log(f"Status: {state_key} = {text}")
         if state_key == "record": self._pulse(color)
 
     def _start_spinner(self):
@@ -341,6 +427,7 @@ class WhisperPTTApp:
                 self._model_loaded = True
             except Exception as e:
                 state.log(f"⚠️  Model load error: {e}")
+                state.ui_queue.put(("status", "error", T("load_error")))
             finally:
                 self._loading_model = False
 

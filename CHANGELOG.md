@@ -23,6 +23,51 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.8.3] – 2026-03-24
+
+### Added
+- **Full Linux / Wayland support** – the app now runs end-to-end on GNOME Wayland
+- **evdev hotkey backend** (`ptt/hotkey.py`)
+  - Automatically activated when `XDG_SESSION_TYPE=wayland`
+  - Reads raw kernel input events from `/dev/input/event*` (requires `input` group)
+  - Key-name normalisation dict `_EVDEV_NORMALIZE` maps `leftctrl` → `ctrl` etc.
+  - Falls back to pynput with a clear warning if evdev is not importable
+  - Setup: `sudo usermod -aG input $USER` then full graphical logout/login
+- **Wayland clipboard** – `_tk_copy` uses `wl-copy` subprocess on Wayland for reliable
+  clipboard ownership (clipboard survives app focus changes)
+- **Wayland auto-paste** – `_do_type_or_paste` uses `ydotool type` on Wayland
+  (works on GNOME via `/dev/uinput`; no compositor virtual-keyboard protocol needed)
+  - Setup: `sudo apt install ydotool`; `/dev/uinput` ACL access required (set automatically
+    by Steam udev rule or manually: `sudo setfacl -m u:$USER:rw /dev/uinput`)
+  - Falls back to `wtype` (KDE/wlroots), then pyautogui (X11)
+
+### Fixed
+- **`grab_set()` crash on Linux** – deferred with `win.after(50, _try_grab)` so the
+  Settings window is mapped before the grab is attempted
+- **Settings window not horizontally resizable on Linux** – changed to `resizable(True, True)`
+- **ALSA `paInvalidSampleRate` errors at startup** – C-level stderr suppressed during
+  expected-to-fail sample-rate probe; falls back to system default device automatically
+- **`AttributeError: 'WhisperPTTApp' has no attribute '_dx'`** – `_dx`/`_dy` initialised
+  in `__init__`
+- **`winreg` / `winrt` import errors on Linux** – all Windows-only code guarded by
+  `sys.platform != "win32"` early returns
+- **Clipboard lost on Linux** – `pyperclip`/`xclip` exits before paste target reads;
+  fixed with `_tk_copy` owning the X11 CLIPBOARD selection while the app runs
+- **Audio clipping (mic bar stuck red)** – `np.clip` in `audio_callback` + peak
+  normalisation before Whisper transcription (PipeWire gain > 100% → float > 1.0)
+- **Mic device fallback** – if the selected device fails to open, automatically retries
+  with system default; `get_mic_devices()` always lists default as first entry
+- **Default hotkey platform-specific** – `ctrl+alt+space` on Windows (unchanged),
+  `ctrl+space` on Linux (avoids compositor grab of `ctrl+alt` combinations)
+- **"Copy log" button** added to debug panel
+- **PTT START / STOP log messages** added for visibility
+
+### Changed
+- **Windows behaviour unchanged** – every Linux/Wayland code path is guarded by
+  `XDG_SESSION_TYPE=wayland` or `sys.platform != "win32"` checks
+
+---
+
 ## [0.8.2] – 2026-03-20
 
 ### Fixed

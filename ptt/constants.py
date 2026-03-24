@@ -2,7 +2,7 @@
 ptt/constants.py – All compile-time constants (no runtime logic, no local imports).
 """
 
-VERSION = "0.8.2"
+VERSION = "0.8.3"
 
 import sys
 from pathlib import Path
@@ -16,7 +16,7 @@ MODEL_CACHE_DIR = str(BASE_DIR / "models")
 # ─── Defaults ──────────────────────────────────────────────────────────────────
 
 DEFAULTS = {
-    "hotkey":          "ctrl+alt+space",
+    "hotkey":          "ctrl+alt+space" if sys.platform == "win32" else "ctrl+space",
     "language":        "de",        # Whisper recognition language
     "ui_lang":         "en",        # Interface language
     "model":           "base",
@@ -109,6 +109,10 @@ TRANSLATIONS = {
     "btn_clear_log": {
         "en": "🗑️ Clear log", "de": "🗑️ Log leeren",
         "fr": "🗑️ Vider journal", "es": "🗑️ Limpiar log",
+    },
+    "btn_copy_log": {
+        "en": "📋 Copy log", "de": "📋 Log kopieren",
+        "fr": "📋 Copier journal", "es": "📋 Copiar log",
     },
     "flash_copied": {
         "en": "📋 Copied!", "de": "📋 Kopiert!",

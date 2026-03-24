@@ -44,10 +44,10 @@ class SettingsWindow:
         self.win.title(T("settings_win_title"))
         self.win.configure(bg=C["bg"])
         self.win.attributes("-topmost", True)
-        self.win.resizable(False, True)
+        self.win.resizable(True, True)
         self.win.minsize(460, 480)
-        self.win.grab_set()
         self.win.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.win.after(50, self._try_grab)  # defer grab until window is mapped
 
         px, py = parent.winfo_x(), parent.winfo_y()
         sh = self.win.winfo_screenheight()
@@ -58,10 +58,19 @@ class SettingsWindow:
         self._load_values()
         threading.Thread(target=self._detect_hw, daemon=True).start()
 
+    def _try_grab(self):
+        try:
+            self.win.grab_set()
+        except Exception:
+            pass  # non-critical: Wayland / some compositors don't support grabs
+
     def _on_close(self):
         self._stop_recorder()
         self.on_close_cb()
-        self.win.grab_release()
+        try:
+            self.win.grab_release()
+        except Exception:
+            pass
         self.win.destroy()
 
     # ── Notebook ───────────────────────────────────────────────────────────────

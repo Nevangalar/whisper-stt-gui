@@ -8,6 +8,7 @@ All application logic lives in the ptt/ package.
 
 import os
 import sys
+import signal
 import threading
 import tkinter as tk
 
@@ -26,6 +27,11 @@ from ptt.constants import SETTINGS_FILE
 
 
 def main():
+    # On Linux, Ctrl+C sends SIGINT and would kill the process even while the
+    # tkinter window has focus. Ignore it so the user can copy text normally.
+    if sys.platform != "win32":
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+
     load_settings()
     
     # Show first-time setup dialog if no settings.json exists

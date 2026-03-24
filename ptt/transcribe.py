@@ -21,8 +21,10 @@ from ptt.config import T
 def _do_paste(text: str):
     time.sleep(0.15)
     if state.cfg["paste_mode"] == "clipboard":
-        pyperclip.copy(text)
-        pyautogui.hotkey("ctrl", "v")
+        # Ask the main (tkinter) thread to copy to clipboard, then simulate Ctrl+V.
+        # Using ui_queue avoids pyperclip/xclip which loses clipboard on Linux
+        # when the helper process exits before the paste target reads it.
+        state.ui_queue.put(("clipboard_paste", text))
     else:
         pyautogui.write(text, interval=0.01)
 
@@ -39,7 +41,14 @@ def transcribe_and_paste():
 
     audio_data = np.concatenate(chunks, axis=0).flatten().astype(np.float32)
 
-    if float(np.max(np.abs(audio_data))) < 0.001:
+    # Normalize if clipping (e.g. Linux mic gain > 100%) so Whisper gets clean audio
+    peak = float(np.max(np.abs(audio_data)))
+    if peak > 1.0:
+        audio_data = audio_data / peak * 0.95
+
+    if peak < 0.001:
+        # _silent_count is safe without a lock: ptt_lock ensures only one
+        # transcription thread runs at a time (see hotkey._ptt_trigger_release).
         state._silent_count += 1
         state.log(f"⚠️  {T('log_no_signal')} ({state._silent_count}/{SILENT_THRESHOLD})")
         if state._silent_count >= SILENT_THRESHOLD:
@@ -51,12 +60,14 @@ def transcribe_and_paste():
     else:
         state._silent_count = 0
 
-    if len(audio_data) / 16000 < 0.3:
+    if len(audio_data) / 16000 < 0.2:
         state.ui_queue.put(("status", "ready", T("ready")))
         state.log(T("log_too_short")); return
 
     t0       = time.time()
-    in_lang  = state.cfg["language"] or None
+    in_lang  = state.cfg["language"]
+    if not in_lang or in_lang == "auto":
+        in_lang = None  # Whisper expects None for auto-detect, not the string "auto"
     out_lang = state.cfg.get("output_language", "same")
     task     = "translate" if (out_lang == "en" and in_lang != "en") else "transcribe"
     if task == "translate":

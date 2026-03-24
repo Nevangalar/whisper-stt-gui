@@ -7,7 +7,12 @@ import sounddevice as sd
 
 # ─── Hardware detection ────────────────────────────────────────────────────────
 
+_device_cache: dict | None = None  # cached after first call; invalidate by setting to None
+
 def detect_devices() -> dict:
+    global _device_cache
+    if _device_cache is not None:
+        return _device_cache
     r = {"cuda": False, "npu": False, "cuda_name": "", "npu_name": ""}
     try:
         import torch
@@ -49,6 +54,7 @@ def detect_devices() -> dict:
                     break
         except Exception:
             pass
+    _device_cache = r
     return r
 
 def resolve_device(dev_cfg, compute_cfg):
@@ -69,21 +75,28 @@ def get_mic_devices() -> dict:
     """
     Get available microphone input devices.
     Returns dict: {device_index: "Device Name", ...}
-    -1 is always the default device.
+    -1 is always included as the first entry (system default device).
     """
-    devices = {}
+    # -1 = let sounddevice use the OS default; always offer this option first
+    default_label = "Default (system default)"
+    try:
+        default_dev = sd.query_devices(kind="input")
+        default_name = default_dev.get("name", "").strip()
+        if default_name:
+            default_label = f"Default  [{default_name}]"
+    except Exception:
+        pass
+
+    devices = {-1: default_label}
     try:
         devs = sd.query_devices()
         if isinstance(devs, dict):
-            # Only one device (rare), wrap it
             devs = [devs]
-        
         for i, dev in enumerate(devs):
-            # Only show input devices
             if dev.get("max_input_channels", 0) > 0:
                 name = dev.get("name", f"Device {i}").strip()
                 devices[i] = name
     except Exception:
         pass
-    
-    return devices if devices else {-1: "Default"}
+
+    return devices
