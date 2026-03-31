@@ -43,6 +43,7 @@ class WhisperPTTApp:
         self._model_loaded = False
         self._loading_model = False
         self._spinner_active = False
+        self._flash_gen = 0   # increments on each flash to cancel stale reverts
 
         self._dx = 0
         self._dy = 0
@@ -291,9 +292,16 @@ class WhisperPTTApp:
         self.debug_txt.delete("1.0", "end")
 
     def _flash(self, msg, ms=1500):
+        self._flash_gen += 1
+        gen = self._flash_gen
         old = self.status_lbl.cget("text")
         self.status_lbl.config(text=msg, fg=C["ready"])
-        self.root.after(ms, lambda: self.status_lbl.config(text=old, fg=C["dim"]))
+
+        def _revert():
+            if self._flash_gen == gen:   # only revert if no newer flash happened
+                self.status_lbl.config(text=old, fg=C["dim"])
+
+        self.root.after(ms, _revert)
 
     def _retry_mic(self):
         self.mic_btn.config(fg=C["process"])
@@ -392,10 +400,16 @@ class WhisperPTTApp:
         self.recog_txt.insert("end", text)
         self.recog_txt.see("end")
 
+    _LOG_MAX_LINES = 500
+
     def _append_log(self, text: str):
         self.debug_txt.config(state="normal")
         ts = time.strftime("%H:%M:%S")
         self.debug_txt.insert("end", f"[{ts}] {text}\n")
+        # Trim to keep memory bounded
+        line_count = int(self.debug_txt.index("end-1c").split(".")[0])
+        if line_count > self._LOG_MAX_LINES:
+            self.debug_txt.delete("1.0", f"{line_count - self._LOG_MAX_LINES}.0")
         self.debug_txt.see("end")
 
     def _animate_meter(self):
@@ -424,12 +438,14 @@ class WhisperPTTApp:
                 load_model(
                     status_cb=lambda s, m: state.ui_queue.put(("status", s, m))
                 )
-                self._model_loaded = True
+                with state.model_load_lock:
+                    self._model_loaded = True
             except Exception as e:
                 state.log(f"⚠️  Model load error: {e}")
                 state.ui_queue.put(("status", "error", T("load_error")))
             finally:
-                self._loading_model = False
+                with state.model_load_lock:
+                    self._loading_model = False
 
         threading.Thread(target=_load, daemon=True).start()
 
