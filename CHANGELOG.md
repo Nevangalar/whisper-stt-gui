@@ -385,7 +385,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 | 0.8.2   | 2026-03-20 | 18 fixes: thread safety, error handling, code quality, build (architect review) |
 | 0.8.1   | 2026-03-19 | Animated loading spinner, progress dialog removed, setup dialog location fix |
 | 0.8.0   | 2026-03-18 | Microphone selection, first-time setup, non-blocking progress, flexible Python |
-| 0.7.0   | 2026-02-24 | Refactored into `ppt/` package (11 modules), thin entry point |
+| 0.7.0   | 2026-02-24 | Refactored into `ptt/` package (11 modules), thin entry point |
 | 0.6.0   | 2026-02-22 | Output language / translation (speak DE → paste EN) |
 | 0.5.0   | 2026-02-22 | Multilingual UI (EN/DE/FR/ES), T() translation system |
 | 0.4.0   | 2026-02-22 | Mic watchdog, Windows permission request, auto-restart |

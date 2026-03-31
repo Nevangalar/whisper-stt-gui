@@ -7,7 +7,14 @@ import sounddevice as sd
 
 # ─── Hardware detection ────────────────────────────────────────────────────────
 
-_device_cache: dict | None = None  # cached after first call; invalidate by setting to None
+_device_cache: dict | None = None  # cached after first call; invalidate by calling invalidate_device_cache()
+
+def invalidate_device_cache() -> None:
+    """Force detect_devices() to re-probe hardware on next call.
+    Call this when a settings refresh button is clicked or a device change is detected.
+    """
+    global _device_cache
+    _device_cache = None
 
 def detect_devices() -> dict:
     global _device_cache

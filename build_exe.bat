@@ -1,11 +1,11 @@
 @echo off
 REM ================================================
-REM  Whisper PTT GUI v3 – Setup + .exe Build
+REM  Whisper PTT GUI v0.8.3 – Setup + .exe Build
 REM ================================================
 setlocal
 echo.
 echo  ================================================
-echo   Whisper PTT GUI v3 – Setup und .exe Build
+echo   Whisper PTT GUI v0.8.3 – Setup und .exe Build
 echo  ================================================
 
 echo.
