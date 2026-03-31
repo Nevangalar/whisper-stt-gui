@@ -1,6 +1,8 @@
 """Shared pytest fixtures for Whisper PTT unit tests."""
 import sys
 import types
+import queue
+import threading
 import pytest
 
 @pytest.fixture(autouse=True)
@@ -9,8 +11,6 @@ def mock_ptt_state(monkeypatch):
     Provide a minimal ptt.state stub so unit tests never import
     sounddevice, tkinter, pynput, or faster-whisper.
     """
-    import queue
-
     state_mod = types.ModuleType("ptt.state")
     state_mod.cfg = {
         "ui_lang": "en",
@@ -44,7 +44,6 @@ def mock_ptt_state(monkeypatch):
     state_mod._ptt_kb_listener = None
     state_mod._ptt_ms_listener = None
 
-    import threading
     state_mod.record_lock = threading.Lock()
     state_mod.model_load_lock = threading.Lock()
     state_mod.ptt_lock = threading.Lock()
@@ -60,8 +59,9 @@ def mock_ptt_state(monkeypatch):
         "faster_whisper", "torch", "openvino",
     ]:
         if mod_name not in sys.modules:
-            sys.modules[mod_name] = types.ModuleType(mod_name)
+            monkeypatch.setitem(sys.modules, mod_name, types.ModuleType(mod_name))
 
     monkeypatch.setitem(sys.modules, "ptt.state", state_mod)
+    # ptt parent is an empty stub; tests import submodules (ptt.config etc.) directly via patch()
     monkeypatch.setitem(sys.modules, "ptt", types.ModuleType("ptt"))
     return state_mod
