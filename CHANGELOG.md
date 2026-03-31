@@ -23,6 +23,32 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.8.4] – 2026-03-31
+
+### Fixed
+- `config.py`: Log error when `settings.json` is corrupt instead of silently ignoring it
+- `transcribe.py`: Log informational message when input and output language are both English (no-op translation)
+- `transcribe.py`: Temp WAV file is now cleaned up even when `sf.write()` fails (broader `finally` block)
+- `hotkey.py`: Removed debug log that fired on every keypress matching the hotkey key without correct modifiers (caused log flooding)
+- `hotkey.py`: Added warning when a mouse hotkey is configured on Wayland (not supported by evdev backend)
+- `hotkey.py`: `parse_hotkey()` now skips empty parts (returns `None` instead of `""` for missing key)
+- `ui/app.py`: `_model_loaded` flag now written inside `model_load_lock` (thread safety for no-GIL builds)
+- `ui/app.py`: Debug log panel trimmed to 500 lines to prevent unbounded memory growth
+- `ui/app.py`: `_flash()` uses a generation counter to prevent stale status revert on rapid state changes
+- `ui/setup.py`: Show warning dialog when user closes setup window with X button (was silent exit)
+- `ui/setup.py`: `show_first_setup()` accepts optional `parent` to use `tk.Toplevel` instead of a second `tk.Tk()`
+- `ui/helpers.py`: MouseWheel binding scoped to toplevel window instead of `bind_all`
+- `ui/settings.py`: Validate hotkey before saving — reject modifier-only strings and fall back to default
+- `hardware.py`: Added `invalidate_device_cache()` for future refresh support
+- `constants.py`: Moved `VERSION` constant after import statements (PEP 8)
+- `build_exe.bat`: Updated stale "v3" version label to v0.8.4
+- `CHANGELOG.md`: Fixed `ppt/` typo → `ptt/`
+
+### Added
+- `tests/unit/` pytest suite: config load/save, transcription logic, hotkey parsing, hotkey validation (25 tests)
+
+---
+
 ## [0.8.3] – 2026-03-24
 
 ### Added
