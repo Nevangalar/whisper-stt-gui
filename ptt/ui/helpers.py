@@ -85,7 +85,13 @@ def _scrollable_tab(frame):
 
     def _wheel(e):
         canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
-    canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _wheel))
-    canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+    # Bind to the toplevel window while mouse is inside canvas,
+    # not bind_all which affects every widget globally.
+    def _on_enter(e):
+        canvas.winfo_toplevel().bind("<MouseWheel>", _wheel)
+    def _on_leave(e):
+        canvas.winfo_toplevel().unbind("<MouseWheel>")
+    canvas.bind("<Enter>", _on_enter)
+    canvas.bind("<Leave>", _on_leave)
 
     return inner
