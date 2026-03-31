@@ -69,7 +69,11 @@ def transcribe_and_paste():
     if not in_lang or in_lang == "auto":
         in_lang = None  # Whisper expects None for auto-detect, not the string "auto"
     out_lang = state.cfg.get("output_language", "same")
-    task     = "translate" if (out_lang == "en" and in_lang != "en") else "transcribe"
+    if out_lang == "en" and in_lang == "en":
+        # User set both input and output to English – translation is a no-op.
+        # Log a hint so they understand why nothing is "translated".
+        state.log("ℹ️  Input and output language both English – using transcribe mode.")
+    task = "translate" if (out_lang == "en" and in_lang != "en") else "transcribe"
     if task == "translate":
         state.log("🌐 Translation mode: → English")
 
@@ -87,8 +91,8 @@ def transcribe_and_paste():
             # ── faster-whisper (CPU / CUDA) ───────────────────────────────────
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                 tmp_path = tmp.name
-            sf.write(tmp_path, audio_data, 16000)
             try:
+                sf.write(tmp_path, audio_data, 16000)
                 seg, _ = state.whisper_model.transcribe(
                     tmp_path,
                     language=in_lang, task=task,
