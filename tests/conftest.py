@@ -62,6 +62,10 @@ def mock_ptt_state(monkeypatch):
             monkeypatch.setitem(sys.modules, mod_name, types.ModuleType(mod_name))
 
     monkeypatch.setitem(sys.modules, "ptt.state", state_mod)
-    # ptt parent is an empty stub; tests import submodules (ptt.config etc.) directly via patch()
-    monkeypatch.setitem(sys.modules, "ptt", types.ModuleType("ptt"))
+    # Give ptt stub a __path__ so Python can locate ptt.* submodules on disk.
+    import os as _os
+    ptt_mod = types.ModuleType("ptt")
+    ptt_mod.__path__ = [_os.path.join(_os.path.dirname(__file__), "..", "ptt")]
+    ptt_mod.__package__ = "ptt"
+    monkeypatch.setitem(sys.modules, "ptt", ptt_mod)
     return state_mod
