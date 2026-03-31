@@ -482,7 +482,14 @@ class SettingsWindow:
     def _save(self):
         self._stop_recorder()
         hk = self.hotkey_var.get()
-        if "▶" in hk or not hk: hk = DEFAULTS["hotkey"]
+        if "▶" in hk or not hk:
+            hk = DEFAULTS["hotkey"]
+        else:
+            from ptt.hotkey import parse_hotkey
+            parsed = parse_hotkey(hk)
+            if not parsed["key"] and not parsed["mouse"]:
+                state.log(f"⚠️  Invalid hotkey '{hk}' – using default: {DEFAULTS['hotkey']}")
+                hk = DEFAULTS["hotkey"]
         state.cfg["hotkey"]         = hk
         state.cfg["ui_lang"]        = UI_LANGUAGES.get(self.ui_lang_var.get(), "en")
 

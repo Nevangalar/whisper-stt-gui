@@ -55,11 +55,18 @@ def mock_ptt_state(monkeypatch):
     # Stub heavy optional deps so imports don't fail
     for mod_name in [
         "sounddevice", "soundfile", "numpy", "pyperclip", "pyautogui",
-        "pynput", "pynput.keyboard", "pynput.mouse",
+        "pynput", "pynput.keyboard",
         "faster_whisper", "torch", "openvino",
     ]:
         if mod_name not in sys.modules:
             monkeypatch.setitem(sys.modules, mod_name, types.ModuleType(mod_name))
+    # pynput.mouse needs a Button stub so hotkey.py can build MOUSE_BTN_NAMES at import
+    ms_mod = types.ModuleType("pynput.mouse")
+    ms_mod.Button = types.SimpleNamespace(
+        left=object(), right=object(), middle=object()
+    )
+    if "pynput.mouse" not in sys.modules:
+        monkeypatch.setitem(sys.modules, "pynput.mouse", ms_mod)
 
     monkeypatch.setitem(sys.modules, "ptt.state", state_mod)
     # Give ptt stub a __path__ so Python can locate ptt.* submodules on disk.
