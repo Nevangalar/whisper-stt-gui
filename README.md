@@ -375,6 +375,21 @@ If audio still doesn't work: `sudo apt install portaudio19-dev` and reinstall `s
 
 ---
 
+## 🗒️ Version History
+
+| Version | Date | Highlights |
+|---------|------|-----------|
+| **0.8.4** | 2026-03-31 | Bug fix release: log corrupt settings, fix temp WAV cleanup, bounded debug log, hotkey validation, thread-safe model flag, setup X-button warning, 25 new unit tests |
+| 0.8.3 | 2026-03-24 | Full Linux/Wayland support – evdev hotkey backend, `ydotool` paste, setup instructions |
+| 0.8.2 | 2026-03-22 | Thread-safety hardening (18 fixes), input overflow guard, winrt compat |
+| 0.8.1 | 2026-03-19 | Animated loading spinner, progress dialog removed, setup dialog location fix |
+| 0.8.0 | 2026-03-18 | Microphone selection, first-time setup wizard, non-blocking model load |
+| 0.7.0 | 2026-02-24 | Refactored into `ptt/` package (11 modules), thin entry point |
+
+Full changelog: [CHANGELOG.md](CHANGELOG.md)
+
+---
+
 ## 📄 License
 
 MIT License – see [LICENSE](LICENSE)
