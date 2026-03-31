@@ -13,25 +13,40 @@ from ptt.constants import C, MODEL_CACHE_DIR, DEFAULTS
 from ptt.config import T, save_settings
 
 
-def show_first_setup():
+def show_first_setup(parent: tk.Tk = None):
     """
     Show initial setup dialog if no settings.json exists.
+    Pass parent=root to use a Toplevel instead of creating a second Tk root.
     User can:
     1. Use default models/ directory
     2. Browse to existing models folder
     3. Create new folder
     Returns True if setup completed, False if user cancelled.
     """
-    root = tk.Tk()
+    if parent is not None:
+        root = tk.Toplevel(parent)
+        root.grab_set()   # make modal
+    else:
+        root = tk.Tk()
+
     root.title("Whisper PTT – First Setup")
     root.geometry("500x300")
     root.configure(bg=C["bg"])
     root.resizable(False, False)
-    
-    # Make it modal
     root.attributes("-topmost", True)
-    
+
     result = {"done": False}
+
+    def _on_close_btn():
+        """User closed window via title bar X – show explanation."""
+        messagebox.showwarning(
+            "Setup cancelled",
+            "Setup was cancelled.\nWhisper PTT cannot start without selecting a models directory.",
+            parent=root,
+        )
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", _on_close_btn)
     
     # Title
     tk.Label(
@@ -150,5 +165,8 @@ def show_first_setup():
     )
     btn_new.pack(side="left", padx=5, fill="both", expand=True)
     
-    root.mainloop()
+    if parent is None:
+        root.mainloop()
+    else:
+        root.wait_window(root)
     return result["done"]
