@@ -25,8 +25,12 @@ def load_settings():
         try:
             with open(SETTINGS_FILE, encoding="utf-8") as f:
                 state.cfg.update(json.load(f))
-        except Exception:
-            pass
+        except Exception as e:
+            try:
+                state.ui_queue.put(("log", f"⚠️  Settings load failed: {e}"))
+            except Exception:
+                import sys as _sys
+                print(f"[whisper-ptt] Settings load failed: {e}", file=_sys.stderr)
 
 def save_settings():
     try:

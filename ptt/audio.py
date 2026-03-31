@@ -27,9 +27,13 @@ def _beep(freq=880, dur=0.08, vol=0.3):
 # ─── Audio callback ────────────────────────────────────────────────────────────
 
 def audio_callback(indata, frames, time_info, status):
-    # NOTE: audio_chunks.append() is not guarded by record_lock here because
-    # PortAudio callbacks must be non-blocking. CPython's GIL makes list.append()
-    # effectively atomic, so this is safe in practice on CPython.
+    # NOTE: audio_chunks.append() is intentionally not guarded by record_lock.
+    # PortAudio callbacks must be non-blocking and cannot wait on a lock.
+    # CPython's GIL makes list.append() effectively atomic on CPython.
+    # Known TOCTOU: transcribe_and_paste() snapshots+clears audio_chunks while
+    # a final callback may append one more chunk — this is acceptable (< 32ms
+    # of audio lost at most) and preferable to blocking the audio thread.
+    # On no-GIL Python builds (PEP 703), switch to collections.deque with maxlen.
     data = np.clip(indata, -1.0, 1.0)  # guard against out-of-range values from some ALSA devices
     state.current_volume = min(float(np.sqrt(np.mean(data ** 2))) * 8.0, 1.0)
     if status:

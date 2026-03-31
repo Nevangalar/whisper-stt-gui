@@ -17,14 +17,21 @@ from pynput import mouse    as pynput_ms
 
 import ptt.state as state
 
+def _btn(name):
+    return getattr(pynput_ms.Button, name, None)
+
 MOUSE_BTN_NAMES = {
-    pynput_ms.Button.left:   "mouse_left",
-    pynput_ms.Button.right:  "mouse_right",
-    pynput_ms.Button.middle: "mouse_middle",
-#    pynput_ms.Button.x1:     "mouse_x1",
-#    pynput_ms.Button.x2:     "mouse_x2",
-    pynput_ms.Button.button8: "mouse_x1",
-    pynput_ms.Button.button9: "mouse_x2",
+    b: label
+    for b, label in [
+        (pynput_ms.Button.left,   "mouse_left"),
+        (pynput_ms.Button.right,  "mouse_right"),
+        (pynput_ms.Button.middle, "mouse_middle"),
+        (_btn("x1"),       "mouse_x1"),   # Windows
+        (_btn("x2"),       "mouse_x2"),   # Windows
+        (_btn("button8"),  "mouse_x1"),   # Linux evdev
+        (_btn("button9"),  "mouse_x2"),   # Linux evdev
+    ]
+    if b is not None
 }
 
 # Module-level evdev state (Wayland backend)
@@ -38,6 +45,7 @@ def parse_hotkey(hk_str: str) -> dict:
     mod_set = {"ctrl", "alt", "shift", "cmd"}
     mods, main, mouse = set(), None, None
     for p in parts:
+        if not p:                    continue
         if p in mod_set:             mods.add(p)
         elif p.startswith("mouse_"): mouse = p
         else:                        main = p
@@ -245,8 +253,7 @@ def start_ptt_listener():
         if hk_key and name == hk_key:
             if mods_ok():
                 _ptt_trigger_press()
-            else:
-                state.log(f"🔑 '{name}' pressed – held: {held_keys}, need mods: {mod_mods}")
+            # Removed: debug log on every non-matching keypress caused log flooding
 
     def on_release(name: str):
         if hk_key and name == hk_key:
@@ -256,6 +263,11 @@ def start_ptt_listener():
     # ── Wayland: try evdev backend ──────────────────────────────────────────
     if _is_wayland():
         state.log("🐧 Wayland session detected – using evdev keyboard backend")
+        if hk_mouse:
+            state.log(
+                "⚠️  Mouse hotkeys are not supported on Wayland (evdev backend "
+                "does not listen to mouse devices). Switch to a keyboard hotkey in Settings."
+            )
         try:
             import evdev  # noqa: F401 – just check it's importable
             _evdev_stop   = threading.Event()
