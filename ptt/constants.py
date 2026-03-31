@@ -2,10 +2,10 @@
 ptt/constants.py – All compile-time constants (no runtime logic, no local imports).
 """
 
-VERSION = "0.8.3"
-
 import sys
 from pathlib import Path
+
+VERSION = "0.8.3"
 
 # ─── Paths ──────────────────────────────────────────────────────────────────────
 
